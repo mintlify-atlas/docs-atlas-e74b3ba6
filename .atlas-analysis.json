@@ -1,0 +1,189 @@
+{
+  "projectType": "saas",
+  "projectName": "OpenClaw Mission Control",
+  "projectDescription": "Centralized operations and governance platform for running OpenClaw agents across teams and organizations with unified visibility, approval controls, and gateway-aware orchestration.",
+  "theme": "aspen",
+  "primaryColor": "#242b2c",
+  "lightColor": "#040404",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/organizations",
+              "concepts/boards",
+              "concepts/agents",
+              "concepts/gateways",
+              "concepts/tasks"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/authentication",
+              "guides/creating-organizations",
+              "guides/managing-boards",
+              "guides/agent-provisioning",
+              "guides/gateway-setup",
+              "guides/approvals",
+              "guides/webhooks",
+              "guides/memory-management"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/systemd",
+              "deployment/environment-variables",
+              "deployment/database-migrations"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/activity-logs",
+              "operations/template-sync",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth/overview",
+              "api/auth/local",
+              "api/auth/clerk",
+              "api/auth/agent-tokens"
+            ]
+          },
+          {
+            "group": "Organizations",
+            "pages": [
+              "api/organizations/list",
+              "api/organizations/create",
+              "api/organizations/members",
+              "api/organizations/invites"
+            ]
+          },
+          {
+            "group": "Boards",
+            "pages": [
+              "api/boards/list",
+              "api/boards/create",
+              "api/boards/update",
+              "api/boards/memory",
+              "api/boards/webhooks"
+            ]
+          },
+          {
+            "group": "Tasks",
+            "pages": [
+              "api/tasks/list",
+              "api/tasks/create",
+              "api/tasks/update",
+              "api/tasks/dependencies",
+              "api/tasks/comments"
+            ]
+          },
+          {
+            "group": "Agents",
+            "pages": [
+              "api/agents/list",
+              "api/agents/provision",
+              "api/agents/update",
+              "api/agents/heartbeat",
+              "api/agents/endpoints"
+            ]
+          },
+          {
+            "group": "Gateways",
+            "pages": [
+              "api/gateways/list",
+              "api/gateways/create",
+              "api/gateways/templates",
+              "api/gateways/sessions"
+            ]
+          },
+          {
+            "group": "Approvals",
+            "pages": [
+              "api/approvals/list",
+              "api/approvals/request",
+              "api/approvals/review"
+            ]
+          },
+          {
+            "group": "Skills & Tags",
+            "pages": [
+              "api/skills/marketplace",
+              "api/skills/directory",
+              "api/tags/manage"
+            ]
+          },
+          {
+            "group": "Activity & Metrics",
+            "pages": [
+              "api/activity/events",
+              "api/metrics/overview"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Work orchestration with organizations, boards, tasks, and tags",
+    "Agent lifecycle management with provisioning and monitoring",
+    "Gateway-aware orchestration for distributed environments",
+    "Approval-driven governance with human-in-the-loop workflows",
+    "Activity timeline and audit trail for accountability",
+    "Real-time updates via SSE streams",
+    "Webhook integrations with retry logic",
+    "Skills marketplace and agent templates",
+    "Board and board group memory management",
+    "Multi-tenant architecture with role-based access control",
+    "Template synchronization for agent configuration",
+    "Session management and chat history"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/auth/bootstrap",
+    "GET /api/v1/organizations",
+    "POST /api/v1/organizations",
+    "GET /api/v1/boards",
+    "POST /api/v1/boards",
+    "GET /api/v1/tasks",
+    "POST /api/v1/tasks",
+    "GET /api/v1/agents",
+    "POST /api/v1/agents",
+    "GET /api/v1/gateways",
+    "POST /api/v1/gateways",
+    "POST /api/v1/gateways/{id}/templates/sync",
+    "GET /api/v1/approvals",
+    "POST /api/v1/approvals",
+    "GET /api/v1/activity",
+    "GET /api/v1/metrics",
+    "GET /api/v1/skills-marketplace",
+    "GET /api/v1/souls-directory",
+    "POST /api/v1/agent/boards/{id}/tasks/{tid}",
+    "POST /api/v1/agents/heartbeat"
+  ]
+}
