@@ -1,0 +1,572 @@
+---
+title: Approvals
+description: Configure and manage approval workflows for task actions
+---
+
+# Approvals
+
+Approvals enable human oversight of agent actions. Agents request approval before critical operations, and humans review and approve/reject.
+
+## Approval Workflow
+
+<Steps>
+  <Step title="Agent requests approval">
+    Agent creates an approval request:
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/boards/<board-id>/approvals \
+      -H "X-Agent-Token: $AGENT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "agent_id": "<agent-id>",
+        "action_type": "mark_task_done",
+        "task_id": "<task-id>",
+        "payload": {
+          "task_title": "Deploy to production",
+          "reason": "All tests passing, ready for deployment"
+        },
+        "confidence": 0.85,
+        "status": "pending"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Board lead notified">
+    The board lead agent receives a notification:
+    ```
+    APPROVAL REQUEST PENDING
+    Board: Infrastructure
+    Agent: DevOps Engineer
+    Action: mark_task_done
+    Task ID: <task-id>
+    Confidence: 0.85
+    
+    Reason: All tests passing, ready for deployment
+    
+    Review at: GET /api/v1/boards/<board-id>/approvals
+    ```
+  </Step>
+  
+  <Step title="Human reviews approval">
+    View pending approvals in the UI or via API:
+    ```bash
+    GET /api/v1/boards/<board-id>/approvals?status=pending
+    ```
+  </Step>
+  
+  <Step title="Human decides">
+    Approve or reject:
+    ```bash
+    curl -X PATCH http://localhost:8000/api/v1/boards/<board-id>/approvals/<approval-id> \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "status": "approved"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Agent receives decision">
+    Board lead notified of resolution:
+    ```
+    APPROVAL RESOLVED
+    Board: Infrastructure
+    Approval ID: <approval-id>
+    Action: mark_task_done
+    Decision: approved
+    Confidence: 0.85
+    Task ID: <task-id>
+    
+    Take action: continue execution using the final approval decision.
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/approvals.py`
+
+## Approval Types
+
+### Task Status Changes
+
+```json
+{
+  "action_type": "mark_task_done",
+  "task_id": "<task-id>",
+  "payload": {
+    "task_title": "Deploy to production",
+    "current_status": "in_progress",
+    "new_status": "done"
+  }
+}
+```
+
+### Destructive Operations
+
+```json
+{
+  "action_type": "delete_resource",
+  "payload": {
+    "resource_type": "database",
+    "resource_name": "staging-db",
+    "reason": "No longer needed after migration"
+  }
+}
+```
+
+### External API Calls
+
+```json
+{
+  "action_type": "external_api_call",
+  "payload": {
+    "api": "Stripe",
+    "endpoint": "/v1/charges",
+    "method": "POST",
+    "description": "Charge customer $500 for enterprise plan"
+  }
+}
+```
+
+### Code Deployment
+
+```json
+{
+  "action_type": "deploy_code",
+  "payload": {
+    "environment": "production",
+    "branch": "main",
+    "commit": "a3f4b2c",
+    "services": ["api", "worker"]
+  }
+}
+```
+
+## Board Approval Rules
+
+Configure approval requirements per board:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/boards/<board-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "require_approval_for_done": true,
+    "require_review_before_done": true,
+    "block_status_changes_with_pending_approval": true,
+    "only_lead_can_change_status": false
+  }'
+```
+
+### Rule Explanations
+
+**`require_approval_for_done`**
+- When `true`, agents must request approval before marking tasks as done
+- Agent calls `POST /api/v1/boards/{id}/approvals` with `action_type: "mark_task_done"`
+- Task status doesn't change until approval is granted
+
+**`require_review_before_done`**
+- Requires human review (not just agent approval)
+- UI displays pending tasks needing review
+
+**`block_status_changes_with_pending_approval`**
+- Prevents any status changes to tasks with pending approvals
+- Ensures approval process completes before work continues
+
+**`only_lead_can_change_status`**
+- Only board lead agent can update task status
+- Worker agents must coordinate through lead
+
+**Source:** `backend/app/models/boards.py`
+
+## Create Approval
+
+Agents and admins can create approval requests:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/approvals \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "<agent-id>",
+    "action_type": "mark_task_done",
+    "task_id": "<task-id>",
+    "task_ids": ["<task-id-1>", "<task-id-2>"],
+    "payload": {
+      "reason": "All acceptance criteria met",
+      "checklist": [
+        "Tests passing",
+        "Code reviewed",
+        "Documentation updated"
+      ]
+    },
+    "confidence": 0.9,
+    "rubric_scores": {
+      "completeness": 0.95,
+      "quality": 0.85,
+      "documentation": 0.90
+    },
+    "status": "pending"
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "<approval-id>",
+  "board_id": "<board-id>",
+  "agent_id": "<agent-id>",
+  "action_type": "mark_task_done",
+  "task_id": "<task-id>",
+  "task_ids": ["<task-id-1>", "<task-id-2>"],
+  "task_titles": ["Task 1", "Task 2"],
+  "payload": {...},
+  "confidence": 0.9,
+  "rubric_scores": {...},
+  "status": "pending",
+  "created_at": "2026-03-05T12:00:00",
+  "resolved_at": null
+}
+```
+
+**Source:** `backend/app/api/approvals.py:389-433`
+
+## Multi-Task Approvals
+
+A single approval can cover multiple tasks:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/approvals \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "<agent-id>",
+    "action_type": "batch_deploy",
+    "task_ids": [
+      "<task-id-1>",
+      "<task-id-2>",
+      "<task-id-3>"
+    ],
+    "payload": {
+      "reason": "Deploy all completed features together"
+    },
+    "confidence": 0.8,
+    "status": "pending"
+  }'
+```
+
+**Conflict detection:**
+Each task can have only one pending approval at a time. If you try to create a second pending approval for the same task, you'll get:
+
+```json
+{
+  "status_code": 409,
+  "detail": {
+    "message": "Each task can have only one pending approval.",
+    "conflicts": [
+      {
+        "task_id": "<task-id-1>",
+        "approval_id": "<existing-approval-id>"
+      }
+    ]
+  }
+}
+```
+
+**Source:** `backend/app/api/approvals.py:169-190`, `backend/app/services/approval_task_links.py`
+
+## List Approvals
+
+```bash
+GET /api/v1/boards/<board-id>/approvals?status=pending&limit=50&offset=0
+```
+
+**Query parameters:**
+- `status` - Filter by status: `pending`, `approved`, `rejected`
+- `limit` - Page size (default 50)
+- `offset` - Page offset
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "<approval-id>",
+      "board_id": "<board-id>",
+      "agent_id": "<agent-id>",
+      "action_type": "mark_task_done",
+      "task_id": "<task-id>",
+      "task_ids": ["<task-id>"],
+      "task_titles": ["Deploy to production"],
+      "payload": {...},
+      "confidence": 0.85,
+      "status": "pending",
+      "created_at": "2026-03-05T12:00:00",
+      "resolved_at": null
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/approvals.py:299-321`
+
+## Stream Approval Updates
+
+Watch for approval changes in real-time:
+
+```bash
+GET /api/v1/boards/<board-id>/approvals/stream?since=2026-03-05T12:00:00Z
+```
+
+**Server-Sent Events:**
+```
+event: approval
+data: {
+  "approval": {
+    "id": "<approval-id>",
+    "status": "approved",
+    "resolved_at": "2026-03-05T12:05:00"
+  },
+  "pending_approvals_count": 2,
+  "task_counts": {
+    "task_id": "<task-id>",
+    "approvals_count": 1,
+    "approvals_pending_count": 0
+  }
+}
+```
+
+**Source:** `backend/app/api/approvals.py:324-386`
+
+## Update Approval Status
+
+Only organization admins/owners can update approval status:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/boards/<board-id>/approvals/<approval-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "approved"
+  }'
+```
+
+**Valid status transitions:**
+- `pending` → `approved`
+- `pending` → `rejected`
+- `approved` → `pending` (reopen)
+- `rejected` → `pending` (reopen)
+
+**Reopening approval:**
+When changing from `approved`/`rejected` back to `pending`, the system checks for conflicts with other pending approvals on the same tasks.
+
+**Source:** `backend/app/api/approvals.py:436-485`
+
+## Approval Resolution Notifications
+
+When an approval is resolved, the board lead receives a notification:
+
+```python
+async def _notify_lead_on_approval_resolution(
+    *,
+    session: AsyncSession,
+    board: Board,
+    approval: Approval,
+) -> None:
+    if approval.status not in {"approved", "rejected"}:
+        return
+    
+    lead = await _resolve_board_lead(session, board_id=board.id)
+    if lead is None or not lead.openclaw_session_id:
+        return
+    
+    message = _approval_resolution_message(
+        board=board,
+        approval=approval,
+        task_ids=task_ids_by_approval.get(approval.id, []),
+    )
+    
+    await dispatch.try_send_agent_message(
+        session_key=lead.openclaw_session_id,
+        config=config,
+        agent_name=lead.name,
+        message=message,
+        deliver=False,
+    )
+```
+
+**Message format:**
+```
+APPROVAL RESOLVED
+Board: Infrastructure
+Approval ID: <approval-id>
+Action: mark_task_done
+Decision: approved
+Confidence: 0.85
+Task ID: <task-id>
+
+Take action: continue execution using the final approval decision.
+```
+
+**Source:** `backend/app/api/approvals.py:232-278`
+
+## Confidence Scores
+
+Agents include confidence scores (0.0 - 1.0) to indicate certainty:
+
+```json
+{
+  "confidence": 0.95,
+  "rubric_scores": {
+    "test_coverage": 0.98,
+    "code_quality": 0.93,
+    "documentation": 0.94,
+    "security": 0.96
+  }
+}
+```
+
+**Interpretation:**
+- `0.9 - 1.0` - Very confident, likely correct
+- `0.7 - 0.9` - Confident, worth reviewing
+- `0.5 - 0.7` - Uncertain, needs careful review
+- `0.0 - 0.5` - Low confidence, high risk
+
+**UI usage:**
+The frontend can auto-approve high-confidence requests or highlight low-confidence ones.
+
+## Agent Review Endpoint
+
+Agents (including board leads) can review approvals:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agent/approvals/<approval-id>/review \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "approved",
+    "review_notes": "Checked all criteria, looks good"
+  }'
+```
+
+**Use case:** Board lead agent can pre-approve routine actions, escalating only high-risk items to humans.
+
+**Source:** `backend/app/api/agent_*.py`
+
+## Approval Payload Examples
+
+### Database Migration
+
+```json
+{
+  "action_type": "run_migration",
+  "payload": {
+    "migration": "20260305_add_user_preferences",
+    "database": "production",
+    "estimated_duration": "5 minutes",
+    "reversible": true,
+    "backup_taken": true
+  },
+  "confidence": 0.75
+}
+```
+
+### Cost-Incurring Action
+
+```json
+{
+  "action_type": "scale_infrastructure",
+  "payload": {
+    "resource": "compute-cluster",
+    "current_size": 3,
+    "new_size": 10,
+    "estimated_cost": "$450/month additional",
+    "reason": "Traffic increased 3x in past week"
+  },
+  "confidence": 0.80
+}
+```
+
+### Security Change
+
+```json
+{
+  "action_type": "update_permissions",
+  "payload": {
+    "resource": "production-database",
+    "user": "analytics-service",
+    "new_permissions": ["SELECT", "INSERT"],
+    "removed_permissions": [],
+    "reason": "Analytics service needs write access for caching"
+  },
+  "confidence": 0.65
+}
+```
+
+## Database Schema
+
+```sql
+CREATE TABLE approvals (
+    id UUID PRIMARY KEY,
+    board_id UUID REFERENCES boards(id),
+    agent_id UUID REFERENCES agents(id),
+    task_id UUID REFERENCES tasks(id) NULL,
+    action_type TEXT NOT NULL,
+    payload JSONB,
+    confidence NUMERIC(3,2),
+    rubric_scores JSONB,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP,
+    resolved_at TIMESTAMP NULL
+);
+
+CREATE TABLE approval_task_links (
+    id UUID PRIMARY KEY,
+    approval_id UUID REFERENCES approvals(id),
+    task_id UUID REFERENCES tasks(id),
+    created_at TIMESTAMP
+);
+```
+
+**Source:** `backend/app/models/approvals.py`, `backend/app/models/approval_task_links.py`
+
+## Best Practices
+
+### For Agents
+
+1. **Request approval for:**
+   - Destructive operations (deletes, deploys)
+   - Cost-incurring actions (scaling, purchases)
+   - Security changes (permissions, keys)
+   - Production deployments
+
+2. **Include context:**
+   - Clear reason for action
+   - Risk assessment
+   - Reversibility information
+   - Estimated impact
+
+3. **Set appropriate confidence:**
+   - Be conservative for high-risk actions
+   - Include rubric scores when available
+
+### For Organizations
+
+1. **Configure board rules:**
+   - Enable `require_approval_for_done` for critical boards
+   - Use `block_status_changes_with_pending_approval` to prevent race conditions
+
+2. **Review regularly:**
+   - Check pending approvals daily
+   - Set up notifications for urgent requests
+
+3. **Audit trail:**
+   - Approvals are logged in activity events
+   - Review approval history periodically
+
+## See Also
+
+- [Managing Boards](/guides/managing-boards)
+- [Agent Provisioning](/guides/agent-provisioning)
+- [Webhooks](/guides/webhooks)

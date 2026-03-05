@@ -1,0 +1,252 @@
+---
+title: Monitoring
+description: Health check endpoints and monitoring approaches for Mission Control
+---
+
+## Health Check Endpoints
+
+Mission Control exposes three health check endpoints for monitoring and infrastructure orchestration.
+
+### Available Endpoints
+
+All health endpoints are defined in `backend/app/main.py:500-551`.
+
+#### `GET /health`
+
+Lightweight liveness probe endpoint.
+
+```bash
+curl http://localhost:8000/health
+```
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+#### `GET /healthz`
+
+Alias liveness probe endpoint for platform compatibility (Kubernetes-style naming).
+
+```bash
+curl http://localhost:8000/healthz
+```
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+#### `GET /readyz`
+
+Readiness probe endpoint for service orchestration checks. Returns 200 when the service is ready to accept traffic.
+
+```bash
+curl http://localhost:8000/readyz
+```
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+## System Status Verification
+
+### Backend Health
+
+Verify the backend is responding:
+
+```bash
+curl http://localhost:8000/healthz
+```
+
+### CORS Configuration
+
+Verify that the correct origin is permitted:
+
+```bash
+curl -I -X OPTIONS http://localhost:8000/api/v1/organizations/me/member \
+  -H "Origin: http://72.62.201.147" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+Check for `Access-Control-Allow-Origin` in the response headers.
+
+### User Membership and Role
+
+Verify user authentication and role (should return `role: "owner"` for admin access):
+
+```bash
+TOKEN="your-auth-token-here"
+curl http://localhost:8000/api/v1/organizations/me/member \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### List Agents
+
+Verify agent provisioning status:
+
+```bash
+curl http://localhost:8000/api/v1/agents \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Gateway Status
+
+Check the gateway runtime status via the Mission Control API:
+
+```bash
+curl http://localhost:8000/api/v1/gateway/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+This endpoint is defined in `backend/app/api/gateway_sessions.py` and proxies to the OpenClaw gateway health check.
+
+## Monitoring Active Sessions
+
+List active gateway sessions:
+
+```bash
+curl http://localhost:8000/api/v1/gateway/sessions \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Endpoint:** `GET /api/v1/gateway/sessions`
+
+Returns:
+- Active session keys
+- Session labels
+- Agent associations
+- Last activity timestamps
+
+### Session Detail
+
+Get details for a specific session:
+
+```bash
+SESSION_ID="agent:mc-xxx-xxx:main"
+curl "http://localhost:8000/api/v1/gateway/sessions/$SESSION_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Session Chat History
+
+Retrieve the chat history for a session:
+
+```bash
+curl "http://localhost:8000/api/v1/gateway/sessions/$SESSION_ID/history" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Metrics Endpoint
+
+Mission Control provides aggregated operational metrics via the `/api/v1/metrics/dashboard` endpoint.
+
+**Implementation:** `backend/app/api/metrics.py:422-484`
+
+```bash
+curl "http://localhost:8000/api/v1/metrics/dashboard?range=24h" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `range` | `24h` \| `3d` \| `7d` \| `14d` \| `1m` \| `3m` \| `6m` \| `1y` | `24h` | Time range for metrics |
+| `board_id` | UUID | `null` | Filter by board |
+| `group_id` | UUID | `null` | Filter by board group |
+
+### Response Structure
+
+The endpoint returns:
+
+**KPIs:**
+- `active_agents`: Number of agents active in the time range
+- `tasks_in_progress`: Current count of in-progress tasks
+- `error_rate_pct`: Percentage of failed activity events
+- `median_cycle_time_hours_7d`: Median hours from `in_progress_at` to `done`
+
+**Time Series:**
+- `throughput`: Tasks moved to review status over time
+- `cycle_time`: Average task completion time
+- `error_rate`: Percentage of errors over time
+- `wip`: Work-in-progress breakdown by status (inbox, in_progress, review, done)
+
+Each time series includes both `primary` (current range) and `comparison` (previous range) data.
+
+## Service Logs
+
+View live logs for each service:
+
+### Backend Logs
+
+```bash
+journalctl --user -u mission-control-backend -f
+```
+
+### Frontend Logs
+
+```bash
+journalctl --user -u mission-control-frontend -f
+```
+
+### Worker Logs
+
+```bash
+journalctl --user -u mission-control-worker -f
+```
+
+## Service Management
+
+### Check Status
+
+```bash
+systemctl --user status mission-control-backend
+systemctl --user status mission-control-frontend
+systemctl --user status mission-control-worker
+```
+
+### Restart Services
+
+Restart a single service:
+
+```bash
+systemctl --user restart mission-control-backend
+```
+
+Restart all services:
+
+```bash
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+```
+
+## Database Monitoring
+
+Connect to PostgreSQL directly for debugging:
+
+```bash
+cd /home/ubuntu/mission-control/backend
+
+.venv/bin/python3 -c "
+import psycopg
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+cur = conn.cursor()
+cur.execute('SELECT name, status FROM agents')
+for row in cur.fetchall(): print(row)
+"
+```
+
+## Monitoring Best Practices
+
+1. **Health Checks**: Use `/healthz` for liveness and `/readyz` for readiness probes
+2. **Authentication**: Always verify CORS and token configuration if users report access issues
+3. **Logs**: Use `journalctl -f` for real-time debugging, `-n 100` for recent logs
+4. **Metrics**: Use the dashboard endpoint to track throughput, cycle time, and error rates
+5. **Sessions**: Monitor active sessions to verify agents are running and connected

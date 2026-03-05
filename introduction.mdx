@@ -1,0 +1,139 @@
+---
+title: Introduction
+description: Centralized operations and governance platform for running OpenClaw agents across teams and organizations
+---
+
+<img
+  className="block dark:hidden"
+  src="https://media.brand.dev/3b16fb27-22e9-4daa-a368-88b404b0d37e.svg"
+  alt="OpenClaw Mission Control"
+/>
+<img
+  className="hidden dark:block"
+  src="https://media.brand.dev/3b16fb27-22e9-4daa-a368-88b404b0d37e.svg"
+  alt="OpenClaw Mission Control"
+/>
+
+# Welcome to OpenClaw Mission Control
+
+OpenClaw Mission Control is the centralized operations and governance platform for running OpenClaw across teams and organizations, with unified visibility, approval controls, and gateway-aware orchestration.
+
+It gives operators a single interface for work orchestration, agent and gateway management, approval-driven governance, and API-backed automation.
+
+## Platform overview
+
+Mission Control is designed to be the day-to-day operations surface for OpenClaw. Instead of splitting work across multiple tools, teams can plan, execute, review, and audit activity in one system.
+
+### Core operational areas
+
+<CardGroup cols={2}>
+  <Card title="Work Orchestration" icon="diagram-project" href="/concepts/boards">
+    Manage organizations, board groups, boards, tasks, and tags in a unified system
+  </Card>
+  <Card title="Agent Operations" icon="robot" href="/concepts/agents">
+    Create, inspect, and manage agent lifecycle from a unified control surface
+  </Card>
+  <Card title="Governance & Approvals" icon="shield-check" href="/guides/approvals">
+    Route sensitive actions through explicit approval flows with audit trails
+  </Card>
+  <Card title="Gateway Management" icon="server" href="/concepts/gateways">
+    Connect and operate gateway integrations for distributed environments
+  </Card>
+  <Card title="Activity Visibility" icon="timeline" href="/operations/activity-logs">
+    Review a timeline of system actions for faster debugging and accountability
+  </Card>
+  <Card title="API-First Model" icon="code" href="/api/auth/overview">
+    Support both web workflows and automation clients from the same platform
+  </Card>
+</CardGroup>
+
+## Key features
+
+<AccordionGroup>
+  <Accordion title="Work orchestration with organizations, boards, tasks, and tags">
+    Mission Control provides a complete work management system with multi-tenant support. Organizations contain boards, which contain tasks. Board groups allow you to organize related boards together. Tags provide flexible categorization across all entities.
+  </Accordion>
+  <Accordion title="Agent lifecycle management with provisioning and monitoring">
+    Provision agents directly from Mission Control with automatic workspace setup, template synchronization, and credential management. Monitor agent health with heartbeat tracking and real-time status updates.
+  </Accordion>
+  <Accordion title="Gateway-aware orchestration for distributed environments">
+    Connect multiple OpenClaw gateways and route agent operations to the appropriate execution environment. Mission Control handles the RPC communication, authentication, and session management automatically.
+  </Accordion>
+  <Accordion title="Approval-driven governance with human-in-the-loop workflows">
+    Require explicit approvals for sensitive actions. Define approval chains, track decision history, and maintain compliance with clear audit trails.
+  </Accordion>
+  <Accordion title="Activity timeline and audit trail for accountability">
+    Every action in Mission Control is logged to the activity timeline. Review who did what, when they did it, and why. Essential for debugging, compliance, and incident review.
+  </Accordion>
+  <Accordion title="Real-time updates via SSE streams">
+    Subscribe to real-time updates for tasks, agents, and approvals using Server-Sent Events. The UI stays synchronized with backend changes without polling.
+  </Accordion>
+  <Accordion title="Webhook integrations with retry logic">
+    Configure webhooks on boards to notify external systems when tasks change. Mission Control handles retries with exponential backoff and stores delivery history for debugging.
+  </Accordion>
+  <Accordion title="Skills marketplace and agent templates">
+    Browse and install skills from the marketplace. Use pre-configured soul templates to bootstrap agents with specific capabilities and personalities.
+  </Accordion>
+  <Accordion title="Board and board group memory management">
+    Store and retrieve key-value data scoped to boards or board groups. Agents can access this shared memory to coordinate work and maintain state.
+  </Accordion>
+  <Accordion title="Multi-tenant architecture with role-based access control">
+    Organizations provide complete isolation between tenants. Role-based access control (owner, admin, member) determines who can perform administrative actions.
+  </Accordion>
+  <Accordion title="Template synchronization for agent configuration">
+    Synchronize agent configuration templates (TOOLS.md, SOUL.md, IDENTITY.md) to all agents in a gateway with a single API call. Supports selective updates and token rotation.
+  </Accordion>
+  <Accordion title="Session management and chat history">
+    View active agent sessions, inspect chat history, and send messages directly to running agents through the gateway connection.
+  </Accordion>
+</AccordionGroup>
+
+## Use cases
+
+Mission Control is built for teams that need operational control over their agent infrastructure:
+
+- **Multi-team agent operations**: Run multiple boards and board groups across organizations from a single control plane
+- **Human-in-the-loop execution**: Require approvals before sensitive actions and keep decision trails attached to work
+- **Distributed runtime control**: Connect gateways and operate remote execution environments without changing operator workflow
+- **Audit and incident review**: Use activity history to reconstruct what happened, when it happened, and who initiated it
+- **API-backed process integration**: Connect internal workflows and automation clients to the same operational model used in the UI
+
+## What makes Mission Control different
+
+<CardGroup cols={2}>
+  <Card title="Operations-first design" icon="gauge-high">
+    Built for running agent work reliably, not just creating tasks. Every feature is designed for day-to-day operations.
+  </Card>
+  <Card title="Governance built in" icon="lock">
+    Approvals, auth modes, and clear control boundaries are first-class features, not afterthoughts.
+  </Card>
+  <Card title="Gateway-aware orchestration" icon="network-wired">
+    Built to operate both local and connected runtime environments with seamless RPC communication.
+  </Card>
+  <Card title="Unified UI and API model" icon="arrows-split-up-and-left">
+    Operators and automation act on the same objects and lifecycle. No separate admin vs. API models.
+  </Card>
+</CardGroup>
+
+## Who it's for
+
+- **Platform teams** running OpenClaw in self-hosted or internal environments
+- **Operations and engineering teams** that need clear approval and auditability controls
+- **Organizations** that want API-accessible operations without losing a usable web UI
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Mission Control running in minutes with Docker Compose
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation options including systemd and manual setup
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how Mission Control components work together
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Explore the complete REST API for automation and integration
+  </Card>
+</CardGroup>

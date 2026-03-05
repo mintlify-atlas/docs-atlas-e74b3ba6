@@ -1,0 +1,153 @@
+---
+title: "Update Agent"
+api: "PATCH /api/v1/agents/{agent_id}"
+description: "Update agent metadata and optionally reprovision"
+---
+
+Updates an existing agent's configuration. Changes to templates or configuration can trigger reprovisioning on the gateway.
+
+## Authentication
+
+Requires organization admin authentication via `Authorization: Bearer <token>` header.
+
+## Path Parameters
+
+<ParamField path="agent_id" type="string" required>
+  Agent UUID or ID to update
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="force" type="boolean" default="false" optional>
+  Force reprovisioning even if no significant changes detected
+</ParamField>
+
+## Request Body
+
+All fields are optional. Only include fields you want to update.
+
+<ParamField body="name" type="string" optional>
+  New display name for the agent
+</ParamField>
+
+<ParamField body="board_id" type="UUID" optional>
+  Move agent to a different board (requires appropriate permissions)
+</ParamField>
+
+<ParamField body="is_gateway_main" type="boolean" optional>
+  Designate this agent as the gateway main agent
+</ParamField>
+
+<ParamField body="status" type="string" optional>
+  Update lifecycle status: `active`, `paused`, `retired`
+</ParamField>
+
+<ParamField body="heartbeat_config" type="object" optional>
+  Update heartbeat policy
+  ```json
+  {
+    "interval_seconds": 45
+  }
+  ```
+</ParamField>
+
+<ParamField body="identity_profile" type="object" optional>
+  Update identity profile values
+  ```json
+  {
+    "role": "coordinator",
+    "skill": "escalation"
+  }
+  ```
+</ParamField>
+
+<ParamField body="identity_template" type="string" optional>
+  Replace identity template (triggers reprovisioning)
+  
+  Example: "Focus on root cause analysis first."
+</ParamField>
+
+<ParamField body="soul_template" type="string" optional>
+  Replace soul template (triggers reprovisioning)
+  
+  Example: "Escalate only after checking all known mitigations."
+</ParamField>
+
+## Response
+
+Returns an updated `AgentRead` object with the same structure as [List Agents](/api/agents/list).
+
+## Reprovisioning Triggers
+
+Updating these fields will trigger reprovisioning:
+
+- `identity_template`
+- `soul_template`
+- `board_id` (if moving to a different board)
+
+Reprovisioning writes updated configuration files to the agent's workspace on the gateway.
+
+## Example Request
+
+```bash
+curl -X PATCH "https://api.example.com/api/v1/agents/c91361ef-6d85-439c-82e1-8f388a302e6a" \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "paused",
+    "identity_profile": {
+      "role": "coordinator",
+      "on_leave": true
+    }
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "board_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Financial Operations Lead",
+  "status": "paused",
+  "gateway_agent_id": "agent-01JCXYZ123",
+  "workspace_path": "/home/ubuntu/.openclaw/workspace-mc-c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "is_mc_agent": true,
+  "is_board_lead": false,
+  "is_gateway_main": false,
+  "openclaw_session_id": "agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main",
+  "last_seen_at": "2026-03-05T10:30:00Z",
+  "created_at": "2026-03-01T08:00:00Z",
+  "updated_at": "2026-03-05T11:15:00Z",
+  "identity_profile": {
+    "role": "coordinator",
+    "on_leave": true
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="403 Forbidden">
+  Insufficient permissions to update this agent
+</ResponseField>
+
+<ResponseField name="404 Not Found">
+  Agent ID does not exist or is not accessible
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Entity">
+  Validation failed (e.g., invalid status value)
+</ResponseField>
+
+<ResponseField name="502 Bad Gateway">
+  Gateway RPC call failed during reprovisioning
+</ResponseField>
+
+## Use Cases
+
+- **Pause Agent**: Set `status: "paused"` to temporarily disable an agent
+- **Update Instructions**: Change templates to adjust agent behavior
+- **Move Agent**: Reassign agent to a different board
+- **Update Profile**: Add metadata for routing decisions

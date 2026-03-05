@@ -1,0 +1,350 @@
+---
+title: Managing Boards
+description: Create and configure boards for agent workspaces
+---
+
+# Managing Boards
+
+Boards are workspaces where agents collaborate on tasks. Each board requires a gateway connection.
+
+## Prerequisites
+
+- Active organization (see [Creating Organizations](/guides/creating-organizations))
+- Configured gateway (see [Gateway Setup](/guides/gateway-setup))
+- Gateway must have a **main agent** provisioned
+
+## Create a Board
+
+<Steps>
+  <Step title="Ensure gateway is ready">
+    Verify your gateway has a main agent:
+    ```bash
+    curl http://localhost:8000/api/v1/gateways \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+    
+    Look for `"workspace_root"` in the response.
+  </Step>
+  
+  <Step title="Create the board">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/boards \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Product Development",
+        "gateway_id": "<gateway-id>",
+        "board_type": "workflow",
+        "objective": "Build and ship v2.0",
+        "max_agents": 5
+      }'
+    ```
+  </Step>
+  
+  <Step title="Response">
+    ```json
+    {
+      "id": "<board-id>",
+      "name": "Product Development",
+      "organization_id": "<org-id>",
+      "gateway_id": "<gateway-id>",
+      "board_type": "workflow",
+      "objective": "Build and ship v2.0",
+      "max_agents": 5,
+      "created_at": "2026-03-05T12:00:00"
+    }
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/boards.py:389-400`
+
+## Board Types
+
+### Workflow Boards
+
+General-purpose task management:
+
+```json
+{
+  "board_type": "workflow",
+  "objective": "Manage customer support tickets",
+  "max_agents": 3
+}
+```
+
+### Goal Boards
+
+Outcome-focused with metrics:
+
+```json
+{
+  "board_type": "goal",
+  "objective": "Increase user engagement by 25%",
+  "success_metrics": {
+    "dau": "Daily active users > 10k",
+    "retention": "7-day retention > 40%"
+  },
+  "target_date": "2026-06-01",
+  "goal_confirmed": true
+}
+```
+
+<Warning>
+Goal boards **require** `objective` and `success_metrics` to be set.
+</Warning>
+
+**Source:** `backend/app/api/boards.py:169-175`
+
+## Board Configuration
+
+### Basic Settings
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/boards/<board-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Board Name",
+    "objective": "New objective",
+    "max_agents": 10
+  }'
+```
+
+### Approval Rules
+
+Control how tasks move through statuses:
+
+```json
+{
+  "require_approval_for_done": true,
+  "require_review_before_done": false,
+  "block_status_changes_with_pending_approval": true,
+  "only_lead_can_change_status": false
+}
+```
+
+**Field descriptions:**
+- `require_approval_for_done` - Tasks need approval before marking as done
+- `require_review_before_done` - Human review required
+- `block_status_changes_with_pending_approval` - Lock tasks with pending approvals
+- `only_lead_can_change_status` - Only board lead can update task status
+
+**Source:** `backend/app/api/boards.py:446-486`
+
+## Board Groups
+
+Group related boards for cross-board coordination:
+
+<Steps>
+  <Step title="Create board group">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/board-groups \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Engineering Team",
+        "description": "All engineering boards"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Add board to group">
+    ```bash
+    curl -X PATCH http://localhost:8000/api/v1/boards/<board-id> \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "board_group_id": "<group-id>"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Agents are notified">
+    When a board joins or leaves a group, all agents on related boards receive a notification:
+    
+    ```
+    BOARD GROUP UPDATED
+    Joined Board: Product Development
+    Recipient Board: Infrastructure
+    Board Group: Engineering Team
+    
+    Coordination guidance:
+    1) Use cross-board discussion when work spans multiple boards.
+    2) Check related board activity before acting on shared concerns.
+    3) Explicitly coordinate ownership to avoid duplicate work.
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/boards.py:221-338`
+
+## List Boards
+
+```bash
+GET /api/v1/boards?gateway_id=<gateway-id>&board_group_id=<group-id>
+```
+
+**Query Parameters:**
+- `gateway_id` - Filter by gateway
+- `board_group_id` - Filter by group
+- `limit` - Page size (default 50)
+- `offset` - Page offset
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "<board-id>",
+      "name": "Product Development",
+      "gateway_id": "<gateway-id>",
+      "board_type": "workflow",
+      "created_at": "2026-03-05T12:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/boards.py:369-386`
+
+## Board Snapshot
+
+Get a comprehensive view of board state:
+
+```bash
+GET /api/v1/boards/<board-id>/snapshot
+```
+
+**Response includes:**
+- Board metadata
+- All tasks (grouped by status)
+- Assigned agents
+- Pending approvals
+- Recent activity
+
+**Source:** `backend/app/api/boards.py:411-417`
+
+### Group Snapshot
+
+View related boards in the same group:
+
+```bash
+GET /api/v1/boards/<board-id>/group-snapshot?include_self=true&include_done=false&per_board_task_limit=5
+```
+
+**Query Parameters:**
+- `include_self` - Include the requesting board (default `false`)
+- `include_done` - Include completed tasks (default `false`)
+- `per_board_task_limit` - Max tasks per board (default 5, max 100)
+
+**Use case:** Agents check for dependency conflicts and overlapping work across boards.
+
+**Source:** `backend/app/api/boards.py:420-443`
+
+## Delete a Board
+
+<Warning>
+Deleting a board removes all tasks, agents, approvals, webhooks, and memory entries.
+</Warning>
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/boards/<board-id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+The backend cascades deletion to:
+- Tasks and task dependencies
+- Agents (board-scoped)
+- Approvals and approval-task links
+- Board memory entries
+- Board webhooks and payloads
+- Activity events
+
+**Source:** `backend/app/api/boards.py:489-495`, `backend/app/services/board_lifecycle.py`
+
+## Access Control
+
+Board access is controlled at the organization member level:
+
+### Grant Access
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/organizations/me/members/<member-id>/access \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "all_boards_read": false,
+    "all_boards_write": false,
+    "board_access": [
+      {
+        "board_id": "<board-id>",
+        "can_read": true,
+        "can_write": true
+      }
+    ]
+  }'
+```
+
+### Check Access
+
+The backend filters boards using `board_access_filter`:
+
+```python
+def board_access_filter(
+    member: OrganizationMember,
+    *,
+    write: bool = False,
+) -> ColumnElement[bool]:
+    if member.role in {"owner", "admin"}:
+        return col(Board.organization_id) == member.organization_id
+    
+    field = member.all_boards_write if write else member.all_boards_read
+    if field:
+        return col(Board.organization_id) == member.organization_id
+    
+    # Filter to explicit board access grants
+    access_grants = select(OrganizationBoardAccess.board_id).where(
+        col(OrganizationBoardAccess.organization_member_id) == member.id,
+        col(OrganizationBoardAccess.can_write if write else can_read).is_(True),
+    )
+    return col(Board.id).in_(access_grants)
+```
+
+**Source:** `backend/app/services/organizations.py`
+
+## Database Schema
+
+```sql
+CREATE TABLE boards (
+    id UUID PRIMARY KEY,
+    organization_id UUID REFERENCES organizations(id),
+    gateway_id UUID REFERENCES gateways(id),
+    board_group_id UUID REFERENCES board_groups(id) NULL,
+    name TEXT NOT NULL,
+    board_type TEXT DEFAULT 'workflow',
+    objective TEXT,
+    success_metrics JSONB,
+    target_date DATE,
+    goal_confirmed BOOLEAN DEFAULT FALSE,
+    max_agents INTEGER DEFAULT 10,
+    require_approval_for_done BOOLEAN DEFAULT FALSE,
+    require_review_before_done BOOLEAN DEFAULT FALSE,
+    block_status_changes_with_pending_approval BOOLEAN DEFAULT TRUE,
+    only_lead_can_change_status BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+**Source:** `backend/app/models/boards.py`
+
+## See Also
+
+- [Gateway Setup](/guides/gateway-setup)
+- [Agent Provisioning](/guides/agent-provisioning)
+- [Webhooks](/guides/webhooks)
+- [Memory Management](/guides/memory-management)

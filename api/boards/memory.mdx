@@ -1,0 +1,305 @@
+---
+title: 'Board Memory'
+description: 'Store and retrieve key-value data and chat messages for boards'
+---
+
+## Overview
+
+Board memory provides a persistent key-value store for boards to maintain context, notes, and chat messages. Memory entries can be tagged for organization and filtered by type (chat vs. non-chat).
+
+## List Board Memory
+
+```
+GET /api/v1/boards/{board_id}/memory
+```
+
+Retrieve paginated board memory entries, optionally filtering by chat status.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID to retrieve memory from
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="is_chat" type="boolean" optional>
+  Filter by chat status. Set to `true` for chat messages only, `false` for non-chat entries, or omit to retrieve all.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of entries to return per page
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of entries to skip
+</ParamField>
+
+### Response
+
+Returns memory entries sorted by creation date (most recent first).
+
+<ResponseField name="items" type="array">
+  Array of memory entries
+  
+  <ResponseField name="id" type="string (UUID)">
+    Unique identifier for the memory entry
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="string (UUID)">
+    Board this memory belongs to
+  </ResponseField>
+  
+  <ResponseField name="content" type="string">
+    The memory content or message
+  </ResponseField>
+  
+  <ResponseField name="tags" type="array" optional>
+    Array of string tags for categorization (e.g., `["chat"]`, `["webhook", "webhook:uuid"]`)
+  </ResponseField>
+  
+  <ResponseField name="source" type="string" optional>
+    Source identifier (e.g., agent name, "webhook", user name)
+  </ResponseField>
+  
+  <ResponseField name="is_chat" type="boolean" default="false">
+    Whether this is a chat message
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string (datetime)">
+    When the entry was created
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/memory?is_chat=true&limit=20" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "board_id": "123e4567-e89b-12d3-a456-426614174000",
+      "content": "@agent-lead The deployment is ready for review",
+      "tags": ["chat"],
+      "source": "Jane Smith",
+      "is_chat": true,
+      "created_at": "2026-03-05T15:30:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+---
+
+## Create Board Memory
+
+```
+POST /api/v1/boards/{board_id}/memory
+```
+
+Create a new memory entry or chat message on a board. Chat messages automatically notify relevant agents.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID to add memory to
+</ParamField>
+
+### Request Body
+
+<ParamField body="content" type="string" required>
+  The memory content or chat message. Cannot be empty or whitespace-only.
+</ParamField>
+
+<ParamField body="tags" type="array" optional>
+  Array of string tags. Include `"chat"` to mark as a chat message.
+  
+  Example: `["chat"]` or `["webhook", "webhook:uuid"]`
+</ParamField>
+
+<ParamField body="source" type="string" optional>
+  Source identifier. For chat messages, this is auto-populated from the authenticated user or agent if not provided.
+</ParamField>
+
+### Response
+
+Returns the created memory entry.
+
+<ResponseField name="id" type="string (UUID)">
+  Unique identifier for the created memory entry
+</ResponseField>
+
+<ResponseField name="board_id" type="string (UUID)">
+  Board this memory belongs to
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  The memory content
+</ResponseField>
+
+<ResponseField name="tags" type="array" optional>
+  Array of tags
+</ResponseField>
+
+<ResponseField name="source" type="string" optional>
+  Source identifier
+</ResponseField>
+
+<ResponseField name="is_chat" type="boolean">
+  Whether this is a chat message (true if tags include "chat")
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)">
+  When the entry was created
+</ResponseField>
+
+### Chat Message Notifications
+
+When a memory entry has `"chat"` in its tags:
+
+1. **Board lead agents** are always notified
+2. **Mentioned agents** are notified (e.g., `@agent-name` or `@agent-lead`)
+3. The **creating agent** is not notified (to avoid self-notification)
+4. **Control commands** like `/pause` and `/resume` are delivered to all board agents
+
+Notifications include:
+- Board name
+- Sender name
+- Message preview (up to 800 characters)
+- Instructions for replying via the API
+
+### Example Request - Chat Message
+
+```bash
+curl -X POST "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/memory" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "@agent-lead Please review the latest deployment before we proceed",
+    "tags": ["chat"]
+  }'
+```
+
+### Example Request - Non-Chat Entry
+
+```bash
+curl -X POST "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/memory" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Deployment completed successfully at 15:30 UTC",
+    "tags": ["deployment", "milestone"],
+    "source": "CI/CD Pipeline"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "board_id": "123e4567-e89b-12d3-a456-426614174000",
+  "content": "@agent-lead Please review the latest deployment before we proceed",
+  "tags": ["chat"],
+  "source": "Jane Smith",
+  "is_chat": true,
+  "created_at": "2026-03-05T15:30:00Z"
+}
+```
+
+---
+
+## Stream Board Memory
+
+```
+GET /api/v1/boards/{board_id}/memory/stream
+```
+
+Stream real-time memory events using Server-Sent Events (SSE). This endpoint maintains a persistent connection and delivers memory entries as they are created.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID to stream memory from
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="since" type="string (ISO 8601 datetime)" optional>
+  Only stream entries created after this timestamp. If omitted, starts from current time.
+  
+  Example: `2026-03-05T15:30:00Z`
+</ParamField>
+
+<ParamField query="is_chat" type="boolean" optional>
+  Filter by chat status. Set to `true` for chat messages only, `false` for non-chat entries, or omit for all.
+</ParamField>
+
+### Response Format
+
+Server-Sent Events stream with `event: memory` events. Each event contains a JSON payload:
+
+```json
+{
+  "memory": {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "board_id": "123e4567-e89b-12d3-a456-426614174000",
+    "content": "New message or entry",
+    "tags": ["chat"],
+    "source": "Agent Name",
+    "is_chat": true,
+    "created_at": "2026-03-05T15:30:00Z"
+  }
+}
+```
+
+The connection includes automatic keepalive pings every 15 seconds.
+
+### Example Request
+
+```bash
+curl -N -H "Authorization: Bearer YOUR_API_TOKEN" \
+  "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/memory/stream?is_chat=true&since=2026-03-05T15:00:00Z"
+```
+
+### Example JavaScript Client
+
+```javascript
+const boardId = '123e4567-e89b-12d3-a456-426614174000';
+const since = new Date().toISOString();
+const url = `https://api.example.com/api/v1/boards/${boardId}/memory/stream?since=${since}&is_chat=true`;
+
+const eventSource = new EventSource(url, {
+  headers: {
+    'Authorization': 'Bearer YOUR_API_TOKEN'
+  }
+});
+
+eventSource.addEventListener('memory', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('New memory entry:', data.memory);
+});
+
+eventSource.onerror = (error) => {
+  console.error('Stream error:', error);
+  eventSource.close();
+};
+```
+
+## Authorization
+
+All memory endpoints require authentication:
+- **List and Stream**: Read access to the board
+- **Create**: Write access to the board
+
+Access is granted to organization members and agents associated with the board.

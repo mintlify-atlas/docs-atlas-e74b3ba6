@@ -1,0 +1,166 @@
+---
+title: Souls Directory
+api: GET /api/souls-directory/search
+---
+
+Search and fetch agent templates from the souls directory.
+
+## Authentication
+
+Requires admin or agent authentication.
+
+## Search Souls
+
+`GET /api/souls-directory/search`
+
+Search for agent template entries by handle or slug.
+
+### Query Parameters
+
+<ParamField query="q" type="string" default="">
+  Search query text
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Maximum results to return (1-100)
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of soul references
+  
+  <ResponseField name="handle" type="string">
+    Directory handle (e.g., `openclaw`)
+  </ResponseField>
+  
+  <ResponseField name="slug" type="string">
+    Soul slug (e.g., `devops-lead`)
+  </ResponseField>
+  
+  <ResponseField name="page_url" type="string">
+    Public page URL for this soul
+  </ResponseField>
+  
+  <ResponseField name="raw_md_url" type="string">
+    Raw markdown URL
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/souls-directory/search?q=devops&limit=10" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Example Response
+
+```json
+{
+  "items": [
+    {
+      "handle": "openclaw",
+      "slug": "devops-lead",
+      "page_url": "https://souls.directory/openclaw/devops-lead",
+      "raw_md_url": "https://raw.githubusercontent.com/souls-directory/registry/main/openclaw/devops-lead.md"
+    },
+    {
+      "handle": "openclaw",
+      "slug": "kubernetes-expert",
+      "page_url": "https://souls.directory/openclaw/kubernetes-expert",
+      "raw_md_url": "https://raw.githubusercontent.com/souls-directory/registry/main/openclaw/kubernetes-expert.md"
+    }
+  ]
+}
+```
+
+## Get Soul Markdown
+
+`GET /api/souls-directory/{handle}/{slug}` or `GET /api/souls-directory/{handle}/{slug}.md`
+
+Fetch the full markdown content for a soul template.
+
+### Path Parameters
+
+<ParamField path="handle" type="string" required>
+  Directory handle (alphanumeric with hyphens/underscores)
+</ParamField>
+
+<ParamField path="slug" type="string" required>
+  Soul slug (alphanumeric with hyphens/underscores)
+</ParamField>
+
+### Response
+
+<ResponseField name="handle" type="string">
+  Directory handle
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  Soul slug
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  Full markdown content of the soul template
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/souls-directory/openclaw/devops-lead" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Example Response
+
+```json
+{
+  "handle": "openclaw",
+  "slug": "devops-lead",
+  "content": "---\nname: DevOps Lead\nrole: Lead DevOps Engineer\ndescription: Experienced DevOps leader specializing in cloud infrastructure and CI/CD\n---\n\n# DevOps Lead\n\nI am an experienced DevOps engineer with expertise in:\n\n- Kubernetes and container orchestration\n- CI/CD pipeline design and implementation\n- Cloud infrastructure (AWS, GCP, Azure)\n- Infrastructure as Code (Terraform, CloudFormation)\n- Monitoring and observability\n\n## Capabilities\n\n- Design and implement scalable cloud architectures\n- Automate deployment pipelines\n- Optimize infrastructure costs\n- Establish SRE best practices\n- Lead incident response and post-mortems\n"
+}
+```
+
+## Using Soul Templates
+
+Soul templates are agent configuration files that define:
+
+- Agent identity (name, role, description)
+- System instructions and behavior
+- Tool access and permissions
+- Knowledge base references
+
+You can use these templates to:
+
+1. Bootstrap new agents with proven configurations
+2. Share agent designs across organizations
+3. Discover best practices for different agent roles
+
+## Validation
+
+The API validates that handles and slugs:
+
+- Start with an alphanumeric character
+- Contain only alphanumeric characters, hyphens, and underscores
+- Are not empty
+
+### Error Responses
+
+#### 422 Unprocessable Content
+
+```json
+{
+  "detail": "handle contains unsupported characters"
+}
+```
+
+#### 502 Bad Gateway
+
+Returned when unable to fetch the soul markdown from the external directory.
+
+```json
+{
+  "detail": "Failed to fetch soul markdown: connection timeout"
+}
+```

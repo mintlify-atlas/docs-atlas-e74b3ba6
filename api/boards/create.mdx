@@ -1,0 +1,238 @@
+---
+title: 'Create Board'
+description: 'Create a new board in the active organization'
+---
+
+## Endpoint
+
+```
+POST /api/v1/boards
+```
+
+Create a new board in the active organization. The gateway must have a main agent configured before boards can be created.
+
+## Request Body
+
+<ParamField body="name" type="string" required>
+  Display name of the board
+</ParamField>
+
+<ParamField body="slug" type="string" required>
+  URL-friendly identifier for the board
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  Detailed description of the board's purpose. Cannot be empty or whitespace-only.
+</ParamField>
+
+<ParamField body="gateway_id" type="string (UUID)" required>
+  Gateway ID to associate with this board. The gateway must exist and have a main agent configured.
+</ParamField>
+
+<ParamField body="board_group_id" type="string (UUID)" optional>
+  Board group ID to add this board to. Must be a valid group in the organization.
+</ParamField>
+
+<ParamField body="board_type" type="string" default="goal">
+  Type of board. Typically "goal" for goal-oriented boards.
+</ParamField>
+
+<ParamField body="objective" type="string" optional>
+  Primary objective for the board. Required if `goal_confirmed` is true.
+</ParamField>
+
+<ParamField body="success_metrics" type="object" optional>
+  Key-value pairs defining success criteria. Required if `goal_confirmed` is true.
+  
+  Example:
+  ```json
+  {
+    "uptime": "99%",
+    "response_time": "< 200ms"
+  }
+  ```
+</ParamField>
+
+<ParamField body="target_date" type="string (datetime)" optional>
+  Target completion date in ISO 8601 format
+</ParamField>
+
+<ParamField body="goal_confirmed" type="boolean" default="false">
+  Whether the goal has been confirmed. If true, `objective` and `success_metrics` are required.
+</ParamField>
+
+<ParamField body="goal_source" type="string" optional>
+  Source or origin of the goal (e.g., "Product roadmap Q1")
+</ParamField>
+
+<ParamField body="require_approval_for_done" type="boolean" default="true">
+  Whether tasks require approval before marking as done
+</ParamField>
+
+<ParamField body="require_review_before_done" type="boolean" default="false">
+  Whether tasks require review before completion
+</ParamField>
+
+<ParamField body="block_status_changes_with_pending_approval" type="boolean" default="false">
+  Whether status changes are blocked when approval is pending
+</ParamField>
+
+<ParamField body="only_lead_can_change_status" type="boolean" default="false">
+  Whether only the board lead can change task status
+</ParamField>
+
+<ParamField body="max_agents" type="integer" default="1">
+  Maximum number of agents allowed on this board. Must be >= 0.
+</ParamField>
+
+## Response
+
+Returns the created board object.
+
+<ResponseField name="id" type="string (UUID)">
+  Unique identifier for the created board
+</ResponseField>
+
+<ResponseField name="organization_id" type="string (UUID)">
+  Organization that owns this board
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name of the board
+</ResponseField>
+
+<ResponseField name="slug" type="string">
+  URL-friendly identifier
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Board description
+</ResponseField>
+
+<ResponseField name="gateway_id" type="string (UUID)">
+  Associated gateway ID
+</ResponseField>
+
+<ResponseField name="board_group_id" type="string (UUID)" optional>
+  Board group ID, if assigned
+</ResponseField>
+
+<ResponseField name="board_type" type="string">
+  Type of board
+</ResponseField>
+
+<ResponseField name="objective" type="string" optional>
+  Primary objective
+</ResponseField>
+
+<ResponseField name="success_metrics" type="object" optional>
+  Success criteria key-value pairs
+</ResponseField>
+
+<ResponseField name="target_date" type="string (datetime)" optional>
+  Target completion date
+</ResponseField>
+
+<ResponseField name="goal_confirmed" type="boolean">
+  Whether goal is confirmed
+</ResponseField>
+
+<ResponseField name="goal_source" type="string" optional>
+  Source of the goal
+</ResponseField>
+
+<ResponseField name="require_approval_for_done" type="boolean">
+  Approval requirement setting
+</ResponseField>
+
+<ResponseField name="require_review_before_done" type="boolean">
+  Review requirement setting
+</ResponseField>
+
+<ResponseField name="block_status_changes_with_pending_approval" type="boolean">
+  Status change blocking setting
+</ResponseField>
+
+<ResponseField name="only_lead_can_change_status" type="boolean">
+  Lead-only status change setting
+</ResponseField>
+
+<ResponseField name="max_agents" type="integer">
+  Maximum agents allowed
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)">
+  Last update timestamp
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST "https://api.example.com/api/v1/boards" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Q1 Product Launch",
+    "slug": "q1-product-launch",
+    "description": "Launch new product features for Q1 2026",
+    "gateway_id": "550e8400-e29b-41d4-a716-446655440000",
+    "board_type": "goal",
+    "objective": "Successfully launch product with 95% uptime",
+    "success_metrics": {
+      "uptime": "95%",
+      "user_satisfaction": "4.5/5"
+    },
+    "target_date": "2026-03-31T23:59:59Z",
+    "goal_confirmed": true,
+    "max_agents": 3
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Q1 Product Launch",
+  "slug": "q1-product-launch",
+  "description": "Launch new product features for Q1 2026",
+  "gateway_id": "550e8400-e29b-41d4-a716-446655440000",
+  "board_group_id": null,
+  "board_type": "goal",
+  "objective": "Successfully launch product with 95% uptime",
+  "success_metrics": {
+    "uptime": "95%",
+    "user_satisfaction": "4.5/5"
+  },
+  "target_date": "2026-03-31T23:59:59Z",
+  "goal_confirmed": true,
+  "goal_source": null,
+  "require_approval_for_done": true,
+  "require_review_before_done": false,
+  "block_status_changes_with_pending_approval": false,
+  "only_lead_can_change_status": false,
+  "max_agents": 3,
+  "created_at": "2026-03-05T10:30:00Z",
+  "updated_at": "2026-03-05T10:30:00Z"
+}
+```
+
+## Error Responses
+
+<ResponseField name="422 Unprocessable Entity">
+  - `gateway_id is invalid`: Gateway does not exist or does not belong to the organization
+  - `gateway must have a gateway main agent before boards can be created or updated`: Gateway needs a main agent configured first
+  - `board_group_id is invalid`: Board group does not exist or does not belong to the organization
+  - `gateway_id is required`: No gateway_id provided
+  - `description is required`: Description is empty or whitespace-only
+  - `Confirmed goal boards require objective and success_metrics`: When `goal_confirmed` is true, both fields must be provided
+</ResponseField>
+
+## Authorization
+
+Requires organization admin authentication. Only organization admins can create boards.

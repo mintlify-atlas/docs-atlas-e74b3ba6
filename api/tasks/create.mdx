@@ -1,0 +1,258 @@
+---
+title: 'Create Task'
+api: 'POST /api/boards/{board_id}/tasks'
+description: 'Create a task and initialize dependency rows'
+---
+
+Create a new task on a board with optional dependencies, tags, and custom field values. The task will be validated against dependency rules and custom field requirements.
+
+## Path Parameters
+
+<ParamField path="board_id" type="string" required>
+  The UUID of the board to create the task in
+</ParamField>
+
+## Request Body
+
+<ParamField body="title" type="string" required>
+  Task title
+</ParamField>
+
+<ParamField body="description" type="string">
+  Detailed task description
+</ParamField>
+
+<ParamField body="status" type="string" default="inbox">
+  Initial task status
+  
+  Allowed values: `inbox`, `in_progress`, `review`, `done`
+</ParamField>
+
+<ParamField body="priority" type="string" default="medium">
+  Task priority level (e.g., low, medium, high, critical)
+</ParamField>
+
+<ParamField body="due_at" type="string">
+  ISO 8601 timestamp for task due date
+</ParamField>
+
+<ParamField body="assigned_agent_id" type="string">
+  UUID of the agent to assign this task to
+</ParamField>
+
+<ParamField body="created_by_user_id" type="string">
+  UUID of the user creating the task (auto-populated from auth context if not provided)
+</ParamField>
+
+<ParamField body="depends_on_task_ids" type="array">
+  Array of task UUIDs this task depends on. Dependencies must:
+  - Exist on the same board
+  - Not create circular dependency chains
+  - Not include the task itself
+</ParamField>
+
+<ParamField body="tag_ids" type="array">
+  Array of tag UUIDs to apply to this task
+</ParamField>
+
+<ParamField body="custom_field_values" type="object">
+  Key-value pairs for custom field values. Keys must match board-configured custom field definitions.
+</ParamField>
+
+## Response
+
+<ResponseField name="id" type="string">
+  Newly created task UUID
+</ResponseField>
+
+<ResponseField name="board_id" type="string">
+  Board UUID
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Task title
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Task description
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Task status
+</ResponseField>
+
+<ResponseField name="priority" type="string">
+  Task priority
+</ResponseField>
+
+<ResponseField name="due_at" type="string">
+  Due date timestamp
+</ResponseField>
+
+<ResponseField name="assigned_agent_id" type="string">
+  Assigned agent UUID
+</ResponseField>
+
+<ResponseField name="created_by_user_id" type="string">
+  Creator user UUID
+</ResponseField>
+
+<ResponseField name="in_progress_at" type="string">
+  Timestamp when task entered in_progress (null for new tasks)
+</ResponseField>
+
+<ResponseField name="depends_on_task_ids" type="array">
+  Dependency task UUIDs
+</ResponseField>
+
+<ResponseField name="blocked_by_task_ids" type="array">
+  Task UUIDs blocking this task
+</ResponseField>
+
+<ResponseField name="is_blocked" type="boolean">
+  Whether task is blocked by dependencies
+</ResponseField>
+
+<ResponseField name="tag_ids" type="array">
+  Applied tag UUIDs
+</ResponseField>
+
+<ResponseField name="tags" type="array">
+  Tag objects with id, name, and color
+</ResponseField>
+
+<ResponseField name="custom_field_values" type="object">
+  Custom field key-value pairs
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="updated_at" type="string">
+  Last update timestamp
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/boards/123e4567-e89b-12d3-a456-426614174000/tasks" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Implement user authentication",
+    "description": "Add OAuth2 authentication flow with JWT tokens",
+    "status": "inbox",
+    "priority": "high",
+    "due_at": "2026-03-15T18:00:00Z",
+    "depends_on_task_ids": [
+      "660e8400-e29b-41d4-a716-446655440001"
+    ],
+    "tag_ids": [
+      "7f6e5d4c-3b2a-1c0b-9a8f-7e6d5c4b3a2f"
+    ],
+    "custom_field_values": {
+      "effort_points": 5,
+      "sprint": "Sprint 12"
+    }
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "board_id": "123e4567-e89b-12d3-a456-426614174000",
+  "title": "Implement user authentication",
+  "description": "Add OAuth2 authentication flow with JWT tokens",
+  "status": "inbox",
+  "priority": "high",
+  "due_at": "2026-03-15T18:00:00Z",
+  "assigned_agent_id": null,
+  "created_by_user_id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+  "in_progress_at": null,
+  "depends_on_task_ids": [
+    "660e8400-e29b-41d4-a716-446655440001"
+  ],
+  "blocked_by_task_ids": [
+    "660e8400-e29b-41d4-a716-446655440001"
+  ],
+  "is_blocked": true,
+  "tag_ids": [
+    "7f6e5d4c-3b2a-1c0b-9a8f-7e6d5c4b3a2f"
+  ],
+  "tags": [
+    {
+      "id": "7f6e5d4c-3b2a-1c0b-9a8f-7e6d5c4b3a2f",
+      "name": "backend",
+      "color": "#3b82f6"
+    }
+  ],
+  "custom_field_values": {
+    "effort_points": 5,
+    "sprint": "Sprint 12"
+  },
+  "created_at": "2026-03-05T14:22:00Z",
+  "updated_at": "2026-03-05T14:22:00Z"
+}
+```
+
+## Error Responses
+
+### 409 Conflict - Blocked by Dependencies
+
+Returned when creating a task with incomplete dependencies while also assigning it or setting status to non-inbox:
+
+```json
+{
+  "detail": {
+    "message": "Task is blocked by incomplete dependencies.",
+    "code": "task_blocked_cannot_transition",
+    "blocked_by_task_ids": [
+      "660e8400-e29b-41d4-a716-446655440001"
+    ]
+  }
+}
+```
+
+### 409 Conflict - Dependency Cycle
+
+```json
+{
+  "detail": "Dependency cycle detected. Remove the cycle before saving."
+}
+```
+
+### 404 Not Found - Missing Dependencies
+
+```json
+{
+  "detail": {
+    "message": "One or more dependency tasks were not found on this board.",
+    "missing_task_ids": [
+      "660e8400-e29b-41d4-a716-446655440001"
+    ]
+  }
+}
+```
+
+### 422 Unprocessable Entity - Invalid Custom Fields
+
+```json
+{
+  "detail": {
+    "message": "Unknown custom field keys for this board.",
+    "unknown_field_keys": ["invalid_field"]
+  }
+}
+```
+
+## Notes
+
+- Blocked tasks (with incomplete dependencies) cannot be assigned or moved out of inbox status
+- Dependencies must exist on the same board and cannot create cycles
+- Custom field values are validated against board-specific field definitions
+- Required custom fields must have values (or use their default values)
+- The board lead agent is automatically notified when a new task is created
+- If an agent is assigned, they receive a notification via the gateway

@@ -1,0 +1,149 @@
+---
+title: List Approvals
+api: GET /api/boards/{board_id}/approvals
+---
+
+List approvals for a board with optional status filtering.
+
+## Authentication
+
+Requires admin or agent authentication.
+
+## Path Parameters
+
+<ParamField path="board_id" type="string" required>
+  UUID of the board
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by approval status. Options: `pending`, `approved`, `rejected`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Number of items per page (max 100)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Pagination offset
+</ParamField>
+
+## Response
+
+Returns a paginated list of approvals.
+
+<ResponseField name="items" type="array">
+  Array of approval objects
+  
+  <ResponseField name="id" type="string">
+    Approval UUID
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="string">
+    Board UUID
+  </ResponseField>
+  
+  <ResponseField name="action_type" type="string">
+    Type of action requiring approval (e.g., `tool_use`, `task_assignment`)
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Current approval status: `pending`, `approved`, or `rejected`
+  </ResponseField>
+  
+  <ResponseField name="confidence" type="number">
+    Confidence score (0-100)
+  </ResponseField>
+  
+  <ResponseField name="task_id" type="string" optional>
+    Primary task UUID
+  </ResponseField>
+  
+  <ResponseField name="task_ids" type="array">
+    Array of associated task UUIDs
+  </ResponseField>
+  
+  <ResponseField name="task_titles" type="array">
+    Array of task titles corresponding to task_ids
+  </ResponseField>
+  
+  <ResponseField name="agent_id" type="string" optional>
+    Agent UUID that requested approval
+  </ResponseField>
+  
+  <ResponseField name="payload" type="object" optional>
+    Action-specific payload data
+  </ResponseField>
+  
+  <ResponseField name="rubric_scores" type="object" optional>
+    Rubric evaluation scores
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+  
+  <ResponseField name="resolved_at" type="string" optional>
+    ISO 8601 timestamp when approved or rejected
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of approvals matching the filter
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer">
+  Current offset
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/boards/550e8400-e29b-41d4-a716-446655440000/approvals?status=pending" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "board_id": "550e8400-e29b-41d4-a716-446655440000",
+      "action_type": "tool_use",
+      "status": "pending",
+      "confidence": 85.5,
+      "task_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "task_ids": ["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+      "task_titles": ["Deploy backend service"],
+      "agent_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "payload": {
+        "tool_name": "shell",
+        "command": "kubectl apply -f deployment.yaml",
+        "reason": "Deploy new version to production"
+      },
+      "rubric_scores": {
+        "safety": 90,
+        "necessity": 85
+      },
+      "created_at": "2026-03-05T10:30:00Z",
+      "resolved_at": null
+    }
+  ],
+  "total": 5,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+## Notes
+
+- Only one pending approval is allowed per task
+- Approvals are ordered by creation date (newest first)
+- Use the `/stream` endpoint for real-time approval updates

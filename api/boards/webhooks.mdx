@@ -1,0 +1,541 @@
+---
+title: 'Board Webhooks'
+description: 'Configure webhooks to receive external events on boards'
+---
+
+## Overview
+
+Board webhooks allow external systems to send events to boards. Each webhook has a unique URL endpoint that accepts POST requests. When a payload is received, it's stored in board memory and the designated agent (or board lead) is notified.
+
+## List Board Webhooks
+
+```
+GET /api/v1/boards/{board_id}/webhooks
+```
+
+List all configured webhooks for a board.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID to list webhooks for
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of webhooks to return
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of webhooks to skip
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of webhook configurations
+  
+  <ResponseField name="id" type="string (UUID)">
+    Unique webhook identifier
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="string (UUID)">
+    Board this webhook belongs to
+  </ResponseField>
+  
+  <ResponseField name="agent_id" type="string (UUID)" optional>
+    Specific agent to notify when webhook receives data. If null, notifies the board lead.
+  </ResponseField>
+  
+  <ResponseField name="description" type="string">
+    Human-readable description of what this webhook is for and how agents should handle it
+  </ResponseField>
+  
+  <ResponseField name="enabled" type="boolean">
+    Whether the webhook is currently accepting requests
+  </ResponseField>
+  
+  <ResponseField name="endpoint_path" type="string">
+    Relative URL path for this webhook (e.g., `/api/v1/boards/{board_id}/webhooks/{webhook_id}`)
+  </ResponseField>
+  
+  <ResponseField name="endpoint_url" type="string" optional>
+    Full URL for this webhook endpoint. May be null if base_url is not configured.
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string (datetime)">
+    When the webhook was created
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string (datetime)">
+    When the webhook was last updated
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "board_id": "123e4567-e89b-12d3-a456-426614174000",
+      "agent_id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+      "description": "GitHub deployment webhook - create tasks for failed deployments",
+      "enabled": true,
+      "endpoint_path": "/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "endpoint_url": "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "created_at": "2026-03-01T10:00:00Z",
+      "updated_at": "2026-03-01T10:00:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+---
+
+## Create Board Webhook
+
+```
+POST /api/v1/boards/{board_id}/webhooks
+```
+
+Create a new webhook with a generated UUID endpoint.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID to create the webhook for
+</ParamField>
+
+### Request Body
+
+<ParamField body="description" type="string" required>
+  Human-readable description of the webhook's purpose and how agents should handle incoming data. This is sent to agents with each webhook payload.
+  
+  Example: `"GitHub deployment webhook - create tasks for failed deployments and notify team"`
+</ParamField>
+
+<ParamField body="enabled" type="boolean" default="true">
+  Whether the webhook should immediately accept requests
+</ParamField>
+
+<ParamField body="agent_id" type="string (UUID)" optional>
+  Specific agent to notify. If not provided, the board lead is notified. Agent must belong to this board.
+</ParamField>
+
+### Response
+
+Returns the created webhook configuration including the generated endpoint URL.
+
+<ResponseField name="id" type="string (UUID)">
+  Unique webhook identifier (auto-generated)
+</ResponseField>
+
+<ResponseField name="board_id" type="string (UUID)">
+  Board this webhook belongs to
+</ResponseField>
+
+<ResponseField name="agent_id" type="string (UUID)" optional>
+  Agent to notify
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Webhook description
+</ResponseField>
+
+<ResponseField name="enabled" type="boolean">
+  Whether webhook is enabled
+</ResponseField>
+
+<ResponseField name="endpoint_path" type="string">
+  Relative URL path for webhook
+</ResponseField>
+
+<ResponseField name="endpoint_url" type="string" optional>
+  Full webhook URL
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)">
+  Last update timestamp
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "GitHub deployment webhook - create tasks for failed deployments",
+    "enabled": true
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "board_id": "123e4567-e89b-12d3-a456-426614174000",
+  "agent_id": null,
+  "description": "GitHub deployment webhook - create tasks for failed deployments",
+  "enabled": true,
+  "endpoint_path": "/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "endpoint_url": "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "created_at": "2026-03-05T15:30:00Z",
+  "updated_at": "2026-03-05T15:30:00Z"
+}
+```
+
+---
+
+## Update Board Webhook
+
+```
+PATCH /api/v1/boards/{board_id}/webhooks/{webhook_id}
+```
+
+Update webhook description, enabled state, or target agent.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID
+</ParamField>
+
+<ParamField path="webhook_id" type="string (UUID)" required>
+  The webhook ID to update
+</ParamField>
+
+### Request Body
+
+All fields are optional. Only include fields you want to change.
+
+<ParamField body="description" type="string" optional>
+  Updated webhook description
+</ParamField>
+
+<ParamField body="enabled" type="boolean" optional>
+  Enable or disable the webhook
+</ParamField>
+
+<ParamField body="agent_id" type="string (UUID)" optional>
+  Change the target agent. Agent must belong to this board.
+</ParamField>
+
+### Response
+
+Returns the updated webhook configuration.
+
+### Example Request
+
+```bash
+curl -X PATCH "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": false,
+    "description": "GitHub deployment webhook - temporarily disabled for maintenance"
+  }'
+```
+
+---
+
+## Delete Board Webhook
+
+```
+DELETE /api/v1/boards/{board_id}/webhooks/{webhook_id}
+```
+
+Delete a webhook and all its stored payload history.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID
+</ParamField>
+
+<ParamField path="webhook_id" type="string (UUID)" required>
+  The webhook ID to delete
+</ParamField>
+
+### Response
+
+```json
+{
+  "ok": true
+}
+```
+
+### Example Request
+
+```bash
+curl -X DELETE "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+---
+
+## Ingest Webhook Payload
+
+```
+POST /api/v1/boards/{board_id}/webhooks/{webhook_id}
+```
+
+**Public endpoint** - no authentication required. External systems post data here.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID
+</ParamField>
+
+<ParamField path="webhook_id" type="string (UUID)" required>
+  The webhook ID
+</ParamField>
+
+### Request Body
+
+Accepts any valid JSON, plain text, or form data. The system automatically:
+
+1. **Captures the payload** with headers (Content-Type, User-Agent, X-* headers) and source IP
+2. **Stores in board memory** with tags `["webhook", "webhook:{webhook_id}", "payload:{payload_id}"]`
+3. **Queues notification** to the designated agent or board lead
+4. **Returns immediately** with 202 Accepted
+
+### Response
+
+Returns a 202 Accepted status with payload tracking IDs.
+
+<ResponseField name="ok" type="boolean">
+  Always true for successful ingestion
+</ResponseField>
+
+<ResponseField name="board_id" type="string (UUID)">
+  Board that received the webhook
+</ResponseField>
+
+<ResponseField name="webhook_id" type="string (UUID)">
+  Webhook that received the payload
+</ResponseField>
+
+<ResponseField name="payload_id" type="string (UUID)">
+  Unique ID for this payload instance (for later inspection)
+</ResponseField>
+
+### Agent Notification
+
+The target agent receives a message with:
+- Board and webhook identification
+- Payload preview
+- Instructions to triage and create/update tasks
+- Reference to the payload ID for inspection
+
+### Example Request - JSON Payload
+
+```bash
+curl -X POST "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: deployment_status" \
+  -d '{
+    "deployment": {
+      "id": 12345,
+      "environment": "production",
+      "state": "failure"
+    },
+    "repository": {
+      "name": "my-app",
+      "url": "https://github.com/org/my-app"
+    }
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "ok": true,
+  "board_id": "123e4567-e89b-12d3-a456-426614174000",
+  "webhook_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "payload_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+### Error Responses
+
+<ResponseField name="404 Not Found">
+  Board or webhook does not exist
+</ResponseField>
+
+<ResponseField name="410 Gone">
+  Webhook is disabled. Enable it via PATCH endpoint before sending data.
+</ResponseField>
+
+---
+
+## List Webhook Payloads
+
+```
+GET /api/v1/boards/{board_id}/webhooks/{webhook_id}/payloads
+```
+
+List stored payloads for a webhook (for inspection and debugging).
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID
+</ParamField>
+
+<ParamField path="webhook_id" type="string (UUID)" required>
+  The webhook ID
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of payloads to return
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of payloads to skip
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of stored payloads, sorted by received date (most recent first)
+  
+  <ResponseField name="id" type="string (UUID)">
+    Unique payload identifier
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="string (UUID)">
+    Board ID
+  </ResponseField>
+  
+  <ResponseField name="webhook_id" type="string (UUID)">
+    Webhook ID
+  </ResponseField>
+  
+  <ResponseField name="payload" type="object | array | string | number | boolean" optional>
+    The parsed payload data. Type depends on content sent.
+  </ResponseField>
+  
+  <ResponseField name="headers" type="object" optional>
+    Captured HTTP headers (Content-Type, User-Agent, X-* headers)
+  </ResponseField>
+  
+  <ResponseField name="source_ip" type="string" optional>
+    IP address that sent the request
+  </ResponseField>
+  
+  <ResponseField name="content_type" type="string" optional>
+    Content-Type header value
+  </ResponseField>
+  
+  <ResponseField name="received_at" type="string (datetime)">
+    When the payload was received
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7/payloads" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "board_id": "123e4567-e89b-12d3-a456-426614174000",
+      "webhook_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "payload": {
+        "deployment": {
+          "id": 12345,
+          "environment": "production",
+          "state": "failure"
+        },
+        "repository": {
+          "name": "my-app",
+          "url": "https://github.com/org/my-app"
+        }
+      },
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "GitHub-Hookshot/abc123",
+        "x-github-event": "deployment_status"
+      },
+      "source_ip": "192.0.2.1",
+      "content_type": "application/json",
+      "received_at": "2026-03-05T15:30:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+---
+
+## Get Single Webhook Payload
+
+```
+GET /api/v1/boards/{board_id}/webhooks/{webhook_id}/payloads/{payload_id}
+```
+
+Retrieve a single stored payload by ID.
+
+### Path Parameters
+
+<ParamField path="board_id" type="string (UUID)" required>
+  The board ID
+</ParamField>
+
+<ParamField path="webhook_id" type="string (UUID)" required>
+  The webhook ID
+</ParamField>
+
+<ParamField path="payload_id" type="string (UUID)" required>
+  The payload ID to retrieve
+</ParamField>
+
+### Response
+
+Returns a single payload object with the same structure as items in the list endpoint.
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/boards/123e4567-e89b-12d3-a456-426614174000/webhooks/7c9e6679-7425-40de-944b-e07fc1f90ae7/payloads/f47ac10b-58cc-4372-a567-0e02b2c3d479" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+## Authorization
+
+All webhook configuration and payload inspection endpoints require authentication and board access:
+- **List, Create, Update, Delete**: Write access to the board
+- **Get, List Payloads**: Read access to the board
+- **Ingest endpoint**: No authentication required (public)

@@ -1,0 +1,155 @@
+---
+title: "List Gateways"
+api: "GET /api/v1/gateways"
+description: "List gateways for the caller's organization"
+---
+
+Returns a paginated list of gateway configurations for the authenticated user's organization.
+
+## Authentication
+
+Requires organization admin authentication via `Authorization: Bearer <token>` header.
+
+## Query Parameters
+
+<ParamField query="limit" type="integer" default="50" optional>
+  Number of items per page (max 100)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0" optional>
+  Number of items to skip for pagination
+</ParamField>
+
+## Response
+
+<ResponseField name="items" type="GatewayRead[]">
+  Array of gateway objects
+  
+  <ResponseField name="id" type="UUID">
+    Gateway UUID
+  </ResponseField>
+  
+  <ResponseField name="organization_id" type="UUID">
+    Organization that owns this gateway
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Human-readable gateway name
+  </ResponseField>
+  
+  <ResponseField name="url" type="string">
+    WebSocket URL of the gateway (e.g., `ws://gateway-host:18789`)
+  </ResponseField>
+  
+  <ResponseField name="token" type="string" optional>
+    Authentication token for gateway RPC (may be omitted in responses)
+  </ResponseField>
+  
+  <ResponseField name="workspace_root" type="string">
+    Root directory for agent workspaces on the gateway host
+  </ResponseField>
+  
+  <ResponseField name="gateway_agent_id" type="string" optional>
+    Stable gateway-main agent ID in the OpenClaw runtime (e.g., `agent-01J...`)
+  </ResponseField>
+  
+  <ResponseField name="allow_insecure_tls" type="boolean" default="false">
+    Whether to skip TLS certificate validation
+  </ResponseField>
+  
+  <ResponseField name="disable_device_pairing" type="boolean" default="false">
+    Whether device pairing is disabled (uses `control_ui` mode)
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="datetime">
+    Creation timestamp
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="datetime">
+    Last update timestamp
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of gateways
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer">
+  Current offset
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/gateways?limit=20" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "55cc268a-4b45-400f-accf-201e025232ac",
+      "organization_id": "org-123e4567-e89b-12d3-a456-426614174000",
+      "name": "Production Gateway",
+      "url": "ws://72.62.201.147:18789",
+      "workspace_root": "/home/ubuntu/GDRIVE/Nuevo Agente/moltbot",
+      "gateway_agent_id": "agent-01JCXYZ123",
+      "allow_insecure_tls": false,
+      "disable_device_pairing": true,
+      "created_at": "2026-03-01T08:00:00Z",
+      "updated_at": "2026-03-05T10:30:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+## Gateway Configuration
+
+### Workspace Root
+
+The `workspace_root` is the base directory on the gateway host where agent workspaces are created:
+
+```
+{workspace_root}/
+├── workspace-mc-{agent-uuid-1}/
+│   ├── TOOLS.md
+│   ├── IDENTITY.md
+│   └── SOUL.md
+└── workspace-mc-{agent-uuid-2}/
+    ├── TOOLS.md
+    └── ...
+```
+
+### Device Pairing Mode
+
+When `disable_device_pairing=true`, the gateway must have these settings in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+
+Without these settings, RPC calls will fail with "missing scope: operator.read" errors.
+
+## Use Cases
+
+- **Admin Dashboard**: Display all configured gateways
+- **Gateway Selection**: Choose gateway for new agent provisioning
+- **Health Monitoring**: Check gateway connectivity and status
+- **Configuration Review**: Verify gateway settings before sync

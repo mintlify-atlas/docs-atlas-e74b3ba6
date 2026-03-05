@@ -1,0 +1,520 @@
+---
+title: Boards
+description: Work organization, goal tracking, and agent coordination in Mission Control
+---
+
+## Overview
+
+Boards are the primary workspace entity in Mission Control. Each board represents a goal, project, or area of work with its own:
+
+- **Tasks**: Work items tracked and executed
+- **Agents**: Autonomous actors assigned to the board
+- **Objectives**: Clear goal definition and success metrics
+- **Memory**: Persistent key-value storage for board context
+- **Webhooks**: Event-driven integrations
+- **Approval policies**: Governance rules for task lifecycle
+
+Boards are organization-scoped and connect to a gateway for agent operations.
+
+## Data Model
+
+Location: `backend/app/models/boards.py`
+
+```python
+class Board(TenantScoped, table=True):
+    __tablename__ = "boards"
+    
+    # Identity
+    id: UUID
+    organization_id: UUID              # FK to organizations.id
+    name: str                          # Display name
+    slug: str                          # URL-friendly identifier
+    description: str                   # Board description
+    
+    # Organization
+    gateway_id: UUID | None            # FK to gateways.id
+    board_group_id: UUID | None        # FK to board_groups.id
+    board_type: str = "goal"           # Type: goal, project, ops, etc.
+    
+    # Goal Configuration
+    objective: str | None               # Clear goal statement
+    success_metrics: dict | None        # JSON: measurable success criteria
+    target_date: datetime | None        # Goal completion target
+    goal_confirmed: bool = False        # Whether goal is finalized
+    goal_source: str | None             # Origin: user, ai_generated, etc.
+    
+    # Approval Policies
+    require_approval_for_done: bool = True
+    require_review_before_done: bool = False
+    block_status_changes_with_pending_approval: bool = False
+    only_lead_can_change_status: bool = False
+    
+    # Agent Limits
+    max_agents: int = 1                 # Maximum agents per board
+    
+    # Timestamps
+    created_at: datetime
+    updated_at: datetime
+```
+
+### Field Descriptions
+
+**Identity Fields**:
+- `id` - Unique board identifier (UUID)
+- `organization_id` - Parent organization (enforces tenancy)
+- `name` - Human-readable board name
+- `slug` - URL-safe identifier for routing
+- `description` - Markdown-formatted board description
+
+**Organization**:
+- `gateway_id` - Gateway that manages this board's agents (required)
+- `board_group_id` - Optional grouping for related boards
+- `board_type` - Classification: "goal", "project", "ops"
+
+**Goal Configuration**:
+- `objective` - Clear statement of what success looks like
+- `success_metrics` - JSON object with measurable criteria:
+  ```json
+  {
+    "revenue": "$100k MRR",
+    "users": "1000 active users",
+    "uptime": "99.9% SLA"
+  }
+  ```
+- `target_date` - When goal should be achieved
+- `goal_confirmed` - Whether objective and metrics are finalized
+- `goal_source` - How goal was created: "user", "ai_generated"
+
+**Approval Policies**:
+- `require_approval_for_done` - Task needs approval before moving to "done"
+- `require_review_before_done` - Task needs review step before "done"
+- `block_status_changes_with_pending_approval` - Block all changes while approval pending
+- `only_lead_can_change_status` - Only board lead can update task status
+
+**Agent Limits**:
+- `max_agents` - Maximum number of agents allowed on this board (default: 1)
+
+## API Endpoints
+
+Base path: `/api/v1/boards`
+
+### List Boards
+
+```http
+GET /api/v1/boards?page=1&limit=20
+Authorization: Bearer <token>
+```
+
+**Query Parameters**:
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 20)
+- `board_group_id` - Filter by board group
+- `gateway_id` - Filter by gateway
+
+**Response**:
+```json
+{
+  "items": [
+    {
+      "id": "board-uuid",
+      "organization_id": "org-uuid",
+      "name": "Q1 Growth Goals",
+      "slug": "q1-growth-goals",
+      "description": "Revenue and user acquisition targets",
+      "gateway_id": "gateway-uuid",
+      "board_group_id": null,
+      "board_type": "goal",
+      "objective": "Achieve $100k MRR by end of Q1",
+      "success_metrics": {
+        "revenue": "$100k MRR",
+        "conversion_rate": "5%"
+      },
+      "target_date": "2026-03-31T23:59:59Z",
+      "goal_confirmed": true,
+      "require_approval_for_done": true,
+      "max_agents": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-15T10:30:00Z"
+    }
+  ],
+  "total": 15,
+  "page": 1,
+  "limit": 20
+}
+```
+
+### Create Board
+
+```http
+POST /api/v1/boards
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "name": "New Board",
+  "slug": "new-board",
+  "description": "Board description",
+  "gateway_id": "gateway-uuid",
+  "board_type": "goal",
+  "objective": "Clear goal statement",
+  "success_metrics": {
+    "metric1": "target1"
+  },
+  "goal_confirmed": false,
+  "max_agents": 1
+}
+```
+
+**Validation**:
+- `gateway_id` is required
+- `description` cannot be empty
+- If `goal_confirmed=true` and `board_type="goal"`, must provide `objective` and `success_metrics`
+
+### Get Board
+
+```http
+GET /api/v1/boards/{id}
+Authorization: Bearer <token>
+```
+
+### Update Board
+
+```http
+PATCH /api/v1/boards/{id}
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "name": "Updated Name",
+  "objective": "Updated objective",
+  "goal_confirmed": true
+}
+```
+
+**All fields optional** (partial update).
+
+### Delete Board
+
+```http
+DELETE /api/v1/boards/{id}
+Authorization: Bearer <token>
+```
+
+**Side effects**:
+- Deletes all tasks on the board
+- Deprovisions all agents
+- Removes board memory
+- Deletes webhooks
+
+## Board Memory
+
+Boards have persistent key-value storage for agent context.
+
+Location: `backend/app/models/board_memory.py`
+
+```python
+class BoardMemory(QueryModel, table=True):
+    id: UUID
+    board_id: UUID        # FK to boards.id
+    key: str              # Memory key
+    value: str            # Memory value (JSON string)
+    created_at: datetime
+    updated_at: datetime
+```
+
+### Memory API
+
+#### Read Memory
+
+```http
+GET /api/v1/boards/{id}/memory
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+{
+  "board_id": "board-uuid",
+  "data": {
+    "last_deployment": "2026-03-01T10:00:00Z",
+    "active_incidents": "2",
+    "primary_region": "us-east-1"
+  }
+}
+```
+
+#### Write Memory
+
+```http
+POST /api/v1/boards/{id}/memory
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "key": "last_deployment",
+  "value": "2026-03-05T14:30:00Z"
+}
+```
+
+**Agent access**:
+Agents can read/write board memory via:
+```http
+GET /api/v1/agent/board-memory?board_id={board_id}
+POST /api/v1/agent/board-memory
+X-Agent-Token: <agent-token>
+```
+
+## Board Webhooks
+
+Boards can dispatch webhooks on events.
+
+Location: `backend/app/models/board_webhooks.py`
+
+```python
+class BoardWebhook(QueryModel, table=True):
+    id: UUID
+    board_id: UUID           # FK to boards.id
+    url: str                 # Webhook destination
+    events: list[str]        # Event types to trigger on
+    is_active: bool = True   # Enable/disable webhook
+    secret: str | None       # HMAC secret for verification
+    created_at: datetime
+    updated_at: datetime
+```
+
+### Webhook Events
+
+- `task.created` - New task created
+- `task.updated` - Task status or fields changed
+- `task.assigned` - Task assigned to agent
+- `task.completed` - Task moved to "done"
+- `agent.created` - Agent provisioned
+- `agent.updated` - Agent configuration changed
+- `approval.requested` - New approval needed
+- `approval.resolved` - Approval approved/rejected
+
+### Webhook Payload
+
+```json
+{
+  "event": "task.updated",
+  "board_id": "board-uuid",
+  "timestamp": "2026-03-05T14:30:00Z",
+  "data": {
+    "task_id": "task-uuid",
+    "status": "done",
+    "assigned_agent_id": "agent-uuid"
+  }
+}
+```
+
+### Webhook API
+
+```http
+# List webhooks
+GET /api/v1/boards/{id}/webhooks
+
+# Create webhook
+POST /api/v1/boards/{id}/webhooks
+{
+  "url": "https://example.com/webhook",
+  "events": ["task.created", "task.updated"],
+  "secret": "optional-hmac-secret"
+}
+
+# Delete webhook
+DELETE /api/v1/boards/{id}/webhooks/{webhook_id}
+```
+
+Webhooks are dispatched asynchronously via **Redis Queue (RQ)** with retry logic.
+
+## Board Lead Agent
+
+Each board typically has one **lead agent** (`is_board_lead=true`).
+
+The lead agent:
+- Coordinates other agents on the board
+- Has elevated permissions
+- Receives BOARD_IDENTITY.md and BOARD_SOUL.md templates
+- Can delegate tasks to worker agents
+- Manages board-level decisions
+
+Location: `backend/app/models/agents.py`
+```python
+class Agent(QueryModel, table=True):
+    is_board_lead: bool = False  # True for lead agent
+```
+
+Promotion:
+```http
+POST /api/v1/agents/{id}/promote-to-lead
+Authorization: Bearer <token>
+```
+
+## Relationships
+
+```
+Organization (1)
+    └─→ Board (many)
+            ├─→ Tasks (many)
+            ├─→ Agents (many)
+            │   └─→ Lead Agent (1, optional)
+            ├─→ BoardMemory (many)
+            ├─→ BoardWebhooks (many)
+            ├─→ Gateway (1)
+            └─→ BoardGroup (1, optional)
+```
+
+## Template Files
+
+Boards use Jinja2 templates for agent configuration:
+
+Location: `backend/templates/`
+
+- `BOARD_TOOLS.md.j2` - Agent API credentials and tools
+- `BOARD_SOUL.md.j2` - Agent behavior and decision-making
+- `BOARD_IDENTITY.md.j2` - Agent role and context
+- `BOARD_HEARTBEAT.md.j2` - Heartbeat configuration
+
+These are rendered and written to agent workspaces via gateway RPC.
+
+## Agent Provisioning Flow
+
+```
+1. User creates board → POST /api/v1/boards
+2. Backend creates Board record
+3. User creates agent → POST /api/v1/agents
+   {
+     "board_id": "board-uuid",
+     "name": "Board Lead",
+     "is_board_lead": true
+   }
+4. Backend:
+   a. Creates Agent record (status: "provisioning")
+   b. Validates board max_agents limit
+   c. Calls gateway RPC: agents.create(mc-<uuid>)
+   d. Renders templates with board context
+   e. Writes TOOLS.md, BOARD_SOUL.md, BOARD_IDENTITY.md
+   f. Updates Agent status to "ready"
+5. Agent starts and reads templates
+6. Agent registers heartbeat → POST /api/v1/agents/heartbeat
+7. Agent queries tasks → GET /api/v1/agent/boards/{board_id}/tasks
+```
+
+## Best Practices
+
+### 1. Board Creation
+
+- Use descriptive names and slugs
+- Write clear objectives and success metrics
+- Set realistic target dates
+- Choose appropriate `max_agents` based on workload
+
+### 2. Goal Configuration
+
+- Define objective in one clear sentence
+- Use measurable success metrics (numbers, percentages)
+- Set `goal_confirmed=true` only when ready
+- Review and update goals regularly
+
+### 3. Approval Policies
+
+- Use `require_approval_for_done=true` for high-risk boards
+- Enable `only_lead_can_change_status` for strict governance
+- Configure approvers in organization settings
+
+### 4. Agent Assignment
+
+- Start with one lead agent per board
+- Add worker agents only when needed
+- Stay within `max_agents` limit
+- Use agent coordination for multi-agent boards
+
+### 5. Memory Usage
+
+- Store board-level context, not task-specific data
+- Use consistent key naming conventions
+- Keep values serializable (JSON-compatible)
+- Clean up obsolete keys periodically
+
+### 6. Webhook Configuration
+
+- Use specific events, not wildcard subscriptions
+- Implement idempotent webhook handlers
+- Verify HMAC signatures when provided
+- Monitor webhook delivery failures
+
+## Common Workflows
+
+### New Board Setup
+
+1. Create board: `POST /api/v1/boards`
+2. Create lead agent: `POST /api/v1/agents` with `is_board_lead=true`
+3. Wait for agent provisioning (status: "ready")
+4. Create initial tasks: `POST /api/v1/tasks`
+5. Configure webhooks if needed: `POST /api/v1/boards/{id}/webhooks`
+
+### Board Handoff
+
+1. Document board objective and success metrics
+2. Update `description` with context
+3. Add new team members to organization
+4. Grant board access (via board groups or policies)
+5. Transfer lead agent ownership if needed
+
+### Board Archival
+
+1. Complete all active tasks
+2. Export task history (via API)
+3. Save board memory: `GET /api/v1/boards/{id}/memory`
+4. Deprovision agents: `DELETE /api/v1/agents/{id}`
+5. Delete board: `DELETE /api/v1/boards/{id}`
+
+## Troubleshooting
+
+### Cannot Create Board
+
+**Cause**: Missing required `gateway_id`
+
+**Solution**: Create gateway first: `POST /api/v1/gateways`
+
+### Agent Provisioning Fails
+
+**Cause**: 
+- Gateway unreachable
+- Exceeded `max_agents` limit
+- Invalid gateway configuration
+
+**Solution**:
+1. Check gateway status: `GET /api/v1/gateway/status`
+2. Verify `max_agents` not exceeded
+3. Review agent provisioning logs
+
+### Webhooks Not Firing
+
+**Cause**:
+- Webhook `is_active=false`
+- Event type not in `events` list
+- Destination URL unreachable
+
+**Solution**:
+1. Check webhook config: `GET /api/v1/boards/{id}/webhooks`
+2. Test destination URL manually
+3. Review RQ worker logs for dispatch errors
+
+### Board Memory Not Persisting
+
+**Cause**: Agent token authentication failure
+
+**Solution**:
+1. Verify agent token: check TOOLS.md
+2. Re-sync templates: `POST /api/v1/gateways/{id}/templates/sync?rotate_tokens=true`
+3. Test memory write: `POST /api/v1/agent/board-memory`
+
+## Related Concepts
+
+- [Organizations](/concepts/organizations) - Board ownership and access
+- [Tasks](/concepts/tasks) - Work items tracked on boards
+- [Agents](/concepts/agents) - Autonomous actors assigned to boards
+- [Gateways](/concepts/gateways) - Runtime integration for agent operations
+- [Architecture](/concepts/architecture) - System design and data flow

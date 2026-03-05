@@ -1,0 +1,452 @@
+---
+title: Gateway Setup
+description: Configure and connect OpenClaw Gateway to Mission Control
+---
+
+# Gateway Setup
+
+Gateways are the runtime environments where agents execute. Each gateway runs OpenClaw and connects to Mission Control.
+
+## Prerequisites
+
+- OpenClaw Gateway installed and running
+- Gateway accessible via WebSocket (default port: 18789)
+- Active organization in Mission Control
+
+## Gateway Configuration
+
+### OpenClaw Gateway Setup
+
+Edit `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "enabled": true,
+    "port": 18789,
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  },
+  "agents": {
+    "list": []
+  }
+}
+```
+
+<Warning>
+`dangerouslyDisableDeviceAuth` is required for Mission Control to manage agents. Without this flag, the gateway will reject RPC calls with "missing scope: operator.read".
+</Warning>
+
+**Source:** TECHNICAL.md:476-494, TECHNICAL.md:813-829
+
+### Start Gateway
+
+```bash
+openoclaw gateway start
+```
+
+Verify it's running:
+```bash
+curl http://localhost:18789/health
+```
+
+## Register Gateway in Mission Control
+
+<Steps>
+  <Step title="Prepare gateway credentials">
+    Generate a secure token:
+    ```bash
+    TOKEN=$(openssl rand -base64 32)
+    echo $TOKEN
+    ```
+  </Step>
+  
+  <Step title="Register gateway">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/gateways \
+      -H "Authorization: Bearer $MC_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Primary Gateway",
+        "url": "ws://localhost:18789",
+        "token": "'$TOKEN'",
+        "workspace_root": "/home/ubuntu/GDRIVE/agents",
+        "disable_device_pairing": true,
+        "allow_insecure_tls": false
+      }'
+    ```
+  </Step>
+  
+  <Step title="Gateway verification">
+    Mission Control:
+    1. Validates gateway version (`>= GATEWAY_MIN_VERSION`)
+    2. Tests WebSocket connection
+    3. Creates gateway record
+    4. Provisions main agent automatically
+  </Step>
+  
+  <Step title="Response">
+    ```json
+    {
+      "id": "<gateway-id>",
+      "name": "Primary Gateway",
+      "url": "ws://localhost:18789",
+      "workspace_root": "/home/ubuntu/GDRIVE/agents",
+      "organization_id": "<org-id>",
+      "created_at": "2026-03-05T12:00:00"
+    }
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/gateways.py:89-110`
+
+## Gateway Fields
+
+### Required Fields
+
+- `name` - Human-readable identifier
+- `url` - WebSocket URL (e.g., `ws://host:18789` or `wss://host:18789`)
+- `workspace_root` - Absolute path for agent workspaces
+
+### Optional Fields
+
+- `token` - Authentication token for gateway RPC (recommended)
+- `disable_device_pairing` - Set to `true` for Mission Control management (required)
+- `allow_insecure_tls` - Allow self-signed certificates (dev only)
+
+**Source:** `backend/app/schemas/gateways.py`
+
+## Gateway Main Agent
+
+Each gateway has a **main agent** that coordinates gateway-level operations.
+
+### Automatic Provisioning
+
+The main agent is created automatically when you:
+1. Create a gateway
+2. Update gateway connection settings
+
+**Main agent properties:**
+- `board_id` is `NULL` (gateway-scoped, not board-scoped)
+- Session key: `agent:gateway-<gateway-id>:main`
+- OpenClaw agent ID: `mc-gateway-<gateway-id>`
+- Workspace: `{workspace_root}/workspace-gateway-<gateway-id>`
+
+**Source:** `backend/app/services/openclaw/admin_service.py`
+
+### Main Agent Templates
+
+Main agents receive:
+- `TOOLS.md` - Mission Control API access
+- `IDENTITY.md` - Gateway coordinator role
+- `SOUL.md` - Gateway management behavior
+- `USER.md` - Organization context
+
+**Source:** `backend/app/services/openclaw/constants.py:MAIN_TEMPLATE_MAP`
+
+## Template Sync
+
+Template sync updates agent workspace files with the latest configuration.
+
+### When to Sync
+
+Run template sync after:
+- Creating new boards
+- Adding agents to boards
+- Changing board rules or objectives
+- Updating agent identity profiles
+- Gateway configuration changes
+
+### Sync Command
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/gateways/<gateway-id>/templates/sync" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Query Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `include_main` | `true` | Sync gateway main agent |
+| `lead_only` | `false` | Only sync board lead agents |
+| `reset_sessions` | `false` | Force reset agent sessions |
+| `rotate_tokens` | `false` | Generate new auth tokens |
+| `force_bootstrap` | `false` | Overwrite BOOTSTRAP.md |
+| `overwrite` | `false` | Overwrite all files |
+| `board_id` | `null` | Limit to specific board |
+
+**Source:** `backend/app/api/gateways.py:170-184`
+
+### Sync with Token Rotation
+
+Use when:
+- First-time gateway setup
+- Agents removed from `openclaw.json`
+- Tokens compromised
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/gateways/<gateway-id>/templates/sync?rotate_tokens=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**This will:**
+1. Generate new auth tokens for all agents
+2. Update database with new token hashes
+3. Rewrite all `TOOLS.md` files with new tokens
+4. Preserve agent-editable files (MEMORY.md, USER.md)
+
+**Source:** TECHNICAL.md:531-574
+
+### Sync Response
+
+```json
+{
+  "synced_agents": [
+    {
+      "agent_id": "<agent-id>",
+      "agent_name": "Lead Agent",
+      "board_id": "<board-id>",
+      "board_name": "Product Development",
+      "status": "success"
+    }
+  ],
+  "errors": [],
+  "total_synced": 5,
+  "total_failed": 0
+}
+```
+
+**Source:** `backend/app/schemas/gateways.py:GatewayTemplatesSyncResult`
+
+## Gateway RPC Protocol
+
+Mission Control communicates with gateways via WebSocket RPC.
+
+### Connection Flow
+
+<Steps>
+  <Step title="WebSocket connection">
+    ```python
+    ws = await connect(f"{gateway.url}")  # ws://host:18789
+    ```
+  </Step>
+  
+  <Step title="Authentication (if token set)">
+    ```python
+    await ws.send(json.dumps({
+        "method": "auth",
+        "token": gateway.token
+    }))
+    ```
+  </Step>
+  
+  <Step title="RPC calls">
+    ```python
+    await ws.send(json.dumps({
+        "id": "<request-id>",
+        "method": "agents.create",
+        "params": {"name": "mc-c91361ef-...", "workspace": "..."}
+    }))
+    
+    response = await ws.recv()
+    # {"id": "<request-id>", "result": {...}}
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/services/openclaw/gateway_rpc.py`
+
+### Available RPC Methods
+
+**Agent management:**
+- `agents.create` - Create agent entry
+- `agents.update` - Update agent metadata
+- `agents.delete` - Remove agent
+- `agents.files.list` - List workspace files
+- `agents.files.get` - Read file content
+- `agents.files.set` - Write file content
+- `agents.files.delete` - Remove file
+
+**Session management:**
+- `sessions.ensure` - Ensure session exists
+- `sessions.reset` - Clear session history
+- `sessions.delete` - Remove session
+
+**Configuration:**
+- `config.get` - Read gateway config
+- `config.patch` - Update config (heartbeat settings)
+
+**Communication:**
+- `chat.send` - Send message to agent
+
+**Source:** `backend/app/services/openclaw/provisioning.py:498-620`
+
+## Gateway Health Check
+
+Verify gateway connectivity:
+
+```bash
+GET /api/v1/gateway/status
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "version": "2026.02.9",
+  "uptime_seconds": 86400
+}
+```
+
+**Source:** `backend/app/api/gateway_runtime.py`
+
+## Update Gateway
+
+Modify gateway configuration:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/gateways/<gateway-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Gateway",
+    "workspace_root": "/mnt/agents"
+  }'
+```
+
+Updating connection settings (`url`, `token`) triggers main agent reprovisioning.
+
+**Source:** `backend/app/api/gateways.py:128-167`
+
+## Delete Gateway
+
+<Warning>
+Deleting a gateway removes the main agent but does **not** delete boards or board agents. Reassign boards to another gateway before deleting.
+</Warning>
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/gateways/<gateway-id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Source:** `backend/app/api/gateways.py:210-248`
+
+## Troubleshooting
+
+### Gateway version too old
+
+**Error:** "Gateway version 2026.01.5 is below minimum 2026.02.9"
+
+**Fix:** Update OpenClaw:
+```bash
+pip install --upgrade openclaw
+```
+
+Set minimum version in backend `.env`:
+```bash
+GATEWY_MIN_VERSION=2026.02.9
+```
+
+**Source:** `backend/app/services/openclaw/gateway_compat.py`
+
+### Connection refused
+
+**Causes:**
+1. Gateway not running
+2. Firewall blocking port 18789
+3. Incorrect URL in gateway record
+
+**Debug:**
+```bash
+# Test direct connection
+wscat -c ws://localhost:18789
+
+# Check gateway logs
+tail -f ~/.openclaw/logs/gateway.log
+```
+
+### RPC timeout
+
+**Causes:**
+1. Gateway overloaded
+2. Network latency
+3. Large file operations
+
+**Adjust timeout in code:**
+```python
+config = GatewayClientConfig(
+    url=gateway.url,
+    token=gateway.token,
+    timeout_ms=10000  # 10 seconds
+)
+```
+
+**Source:** `backend/app/services/openclaw/gateway_rpc.py:GatewayClientConfig`
+
+### "unable to read AUTH_TOKEN from TOOLS.md"
+
+**Cause:** Agent missing from `openclaw.json` or TOOLS.md not synced
+
+**Fix:** Run sync with token rotation:
+```bash
+curl -X POST "http://localhost:8000/api/v1/gateways/<gateway-id>/templates/sync?rotate_tokens=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Source:** TECHNICAL.md:806-811
+
+## List Gateways
+
+```bash
+GET /api/v1/gateways
+```
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "<gateway-id>",
+      "name": "Primary Gateway",
+      "url": "ws://localhost:18789",
+      "workspace_root": "/home/ubuntu/GDRIVE/agents",
+      "organization_id": "<org-id>",
+      "created_at": "2026-03-05T12:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/gateways.py:75-86`
+
+## Database Schema
+
+```sql
+CREATE TABLE gateways (
+    id UUID PRIMARY KEY,
+    organization_id UUID REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    token TEXT,
+    workspace_root TEXT NOT NULL,
+    disable_device_pairing BOOLEAN DEFAULT FALSE,
+    allow_insecure_tls BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+**Source:** `backend/app/models/gateways.py`
+
+## See Also
+
+- [Agent Provisioning](/guides/agent-provisioning)
+- [Managing Boards](/guides/managing-boards)
+- [Authentication](/guides/authentication)

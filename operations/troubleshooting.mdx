@@ -1,0 +1,580 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Mission Control operations
+---
+
+## Access and Authentication Issues
+
+### "Only organization owners and admins can access agents"
+
+**Symptoms:** User sees this message when trying to access Agents, Gateways, or other admin pages.
+
+**Cause:** The `isAdmin` flag is false in the frontend. This can happen due to:
+1. `isSignedIn` is false (token not loaded)
+2. CORS blocking `/api/v1/organizations/me/member` request
+3. User hasn't completed onboarding (missing timezone)
+
+**Source:** `backend/TECHNICAL.md:787-804`
+
+**Verification Steps:**
+
+1. Check if token is working:
+```bash
+TOKEN="your-token"
+curl http://localhost:8000/api/v1/organizations/me/member \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Expected response:
+```json
+{
+  "role": "owner",
+  ...
+}
+```
+
+2. Check CORS configuration:
+```bash
+grep CORS_ORIGINS backend/.env
+```
+
+Must include the browser origin (e.g., `http://72.62.201.147:3000,http://72.62.201.147`).
+
+3. Verify token in frontend env:
+```bash
+grep NEXT_PUBLIC_LOCAL_AUTH_TOKEN frontend/.env.local
+```
+
+Must match `LOCAL_AUTH_TOKEN` in backend `.env`.
+
+**Solutions:**
+
+**Fix 1: Update CORS origins**
+
+Edit `backend/.env`:
+```bash
+CORS_ORIGINS=http://72.62.201.147:3000,http://72.62.201.147
+```
+
+Restart backend:
+```bash
+systemctl --user restart mission-control-backend
+```
+
+**Fix 2: Verify token configuration**
+
+Ensure both env files have the same token (minimum 50 characters):
+
+```bash
+# backend/.env
+LOCAL_AUTH_TOKEN=openclaw-mission-control-secure-token-2026-do-not-share-this-key-with-anyone
+
+# frontend/.env.local
+NEXT_PUBLIC_LOCAL_AUTH_TOKEN=openclaw-mission-control-secure-token-2026-do-not-share-this-key-with-anyone
+```
+
+**Fix 3: Complete onboarding**
+
+If user is stuck on onboarding screen, set timezone directly in database:
+
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+conn.cursor().execute(\"UPDATE users SET timezone='America/Mexico_City' WHERE email='admin@home.local'\")
+conn.commit()
+print('Timezone updated')
+"
+```
+
+### "missing scope: operator.read"
+
+**Symptoms:** Template sync or gateway operations fail with this error.
+
+**Cause:** Gateway doesn't have `dangerouslyDisableDeviceAuth=true` in configuration.
+
+**Source:** `backend/TECHNICAL.md:813-828`
+
+**Solution:**
+
+Edit `~/.openclaw/openclaw.json` on the gateway host:
+
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+
+Restart the gateway:
+```bash
+pkill -f openclaw
+# Restart OpenClaw via your startup method
+```
+
+Verify configuration took effect:
+```bash
+curl http://localhost:8000/api/v1/gateway/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Template Sync Issues
+
+### "unable to read AUTH_TOKEN from TOOLS.md (run with rotate_tokens=true)"
+
+**Symptoms:** Template sync fails with this error message.
+
+**Cause:** The agent entries (`mc-*`) don't exist in the gateway's `openclaw.json`, so the gateway cannot serve the TOOLS.md file.
+
+**Source:** `backend/TECHNICAL.md:806-811`
+
+**Solution:**
+
+Run sync with `rotate_tokens=true` to regenerate tokens and recreate agent entries:
+
+```bash
+GATEWAY_ID="gateway-uuid"
+TOKEN="your-auth-token"
+
+curl -X POST "http://localhost:8000/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**When to use `rotate_tokens=true`:**
+- First-time gateway setup
+- Agents were manually deleted from `openclaw.json`
+- Tokens were compromised
+- Gateway was reinstalled or reset
+
+### "Gateway rejected required lead workspace files as unsupported"
+
+**Symptoms:** Template sync fails when syncing board lead agents.
+
+**Cause:** Gateway version is too old and doesn't support required workspace files (AGENTS.md, ROLES.md).
+
+**Solution:**
+
+Upgrade the gateway to version `2026.02.9` or later:
+
+```bash
+# Check current version
+curl http://localhost:8000/api/v1/gateway/status \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.version'
+
+# Upgrade gateway (method depends on your installation)
+pip install --upgrade openclaw-gateway
+```
+
+Minimum version requirement is defined in `backend/.env`:
+```bash
+GATEWAY_MIN_VERSION=2026.02.9
+```
+
+## Service Management Issues
+
+### Frontend not starting (EADDRINUSE: port 3000)
+
+**Symptoms:** Frontend service fails to start, port 3000 already in use.
+
+**Cause:** Previous process died but child process is holding the port.
+
+**Source:** `backend/TECHNICAL.md:833-837`
+
+**Solution:**
+
+Kill the process holding port 3000:
+```bash
+fuser -k 3000/tcp
+```
+
+Restart the frontend:
+```bash
+systemctl --user restart mission-control-frontend
+```
+
+Verify it started:
+```bash
+systemctl --user status mission-control-frontend
+```
+
+### Backend fails to start
+
+**Check logs:**
+```bash
+journalctl --user -u mission-control-backend -n 50
+```
+
+**Common issues:**
+
+1. **Database connection failed:**
+   - Verify PostgreSQL is running: `systemctl status postgresql`
+   - Check `DATABASE_URL` in `backend/.env`
+
+2. **Redis connection failed:**
+   - Verify Redis is running: `systemctl status redis`
+   - Check `RQ_REDIS_URL` in `backend/.env`
+
+3. **Port already in use:**
+   ```bash
+   lsof -i :8000
+   # Kill the process if needed
+   ```
+
+4. **Migration failed:**
+   ```bash
+   cd /home/ubuntu/mission-control/backend
+   .venv/bin/alembic current
+   .venv/bin/alembic upgrade head
+   ```
+
+### Worker not processing jobs
+
+**Check worker status:**
+```bash
+systemctl --user status mission-control-worker
+journalctl --user -u mission-control-worker -f
+```
+
+**Verify Redis connection:**
+```bash
+redis-cli ping
+```
+
+Should return `PONG`.
+
+**Check job queue:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import redis
+r = redis.from_url('redis://localhost:6379/0')
+print(f'Pending jobs: {r.llen(\"rq:queue:default\")}')
+"
+```
+
+**Restart worker:**
+```bash
+systemctl --user restart mission-control-worker
+```
+
+## Database Issues
+
+### Timezone not set (redirect to /onboarding)
+
+**Symptoms:** User is redirected to `/onboarding` even after completing it.
+
+**Cause:** `isOnboardingComplete(profile)` requires both `name` and `timezone` to be set.
+
+**Source:** `backend/TECHNICAL.md:839-852`
+
+**Solution:**
+
+Set timezone directly in database:
+
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+cur = conn.cursor()
+cur.execute(\"UPDATE users SET timezone='America/Mexico_City', name='Admin User' WHERE email='admin@home.local'\")
+conn.commit()
+print(f'Updated {cur.rowcount} users')
+"
+```
+
+### Migration out of sync
+
+**Check current migration:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/alembic current
+```
+
+**View migration history:**
+```bash
+.venv/bin/alembic history
+```
+
+**Apply pending migrations:**
+```bash
+.venv/bin/alembic upgrade head
+```
+
+**Downgrade if needed:**
+```bash
+# Downgrade one revision
+.venv/bin/alembic downgrade -1
+
+# Downgrade to specific revision
+.venv/bin/alembic downgrade <revision-id>
+```
+
+### Database connection errors
+
+**Verify database is accessible:**
+```bash
+psql -h localhost -U postgres -d mission_control -c "SELECT COUNT(*) FROM users;"
+```
+
+**Check connection string:**
+```bash
+grep DATABASE_URL backend/.env
+```
+
+Format: `postgresql+psycopg://user:password@host:5432/database`
+
+**Test connection from Python:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+try:
+    conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+    print('Connection successful')
+    conn.close()
+except Exception as e:
+    print(f'Connection failed: {e}')
+"
+```
+
+## Agent Provisioning Issues
+
+### Agent stuck in "provisioning" status
+
+**Check agent status:**
+```bash
+curl http://localhost:8000/api/v1/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.items[] | {id, name, status}'
+```
+
+**Check backend logs:**
+```bash
+journalctl --user -u mission-control-backend -n 100 | grep -i provision
+```
+
+**Manually transition agent to ready:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+from datetime import datetime, timezone
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+cur = conn.cursor()
+agent_id = 'agent-uuid-here'
+cur.execute(
+    'UPDATE agents SET status = %s, updated_at = %s WHERE id = %s',
+    ('ready', datetime.now(timezone.utc), agent_id)
+)
+conn.commit()
+print(f'Updated agent {agent_id} to ready')
+"
+```
+
+### Agent not responding to heartbeat
+
+**Verify agent session exists:**
+```bash
+curl http://localhost:8000/api/v1/gateway/sessions \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.[] | {key, label}'
+```
+
+**Check agent's last_seen_at:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+cur = conn.cursor()
+cur.execute('SELECT name, status, last_seen_at FROM agents ORDER BY updated_at DESC LIMIT 10')
+for row in cur.fetchall():
+    print(row)
+"
+```
+
+**Verify agent has correct TOOLS.md:**
+
+From the gateway host:
+```bash
+cat ~/.openclaw/workspace-mc-{agent-key}/TOOLS.md
+```
+
+Should contain:
+- `BASE_URL=http://your-backend-url:8000`
+- `AUTH_TOKEN=token-value`
+- `AGENT_ID=uuid`
+
+### Gateway RPC calls failing
+
+**Test gateway connectivity:**
+```bash
+curl http://localhost:8000/api/v1/gateway/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Check gateway URL in database:**
+```bash
+cd /home/ubuntu/mission-control/backend
+.venv/bin/python3 -c "
+import psycopg
+conn = psycopg.connect('postgresql://postgres:postgres@localhost:5432/mission_control')
+cur = conn.cursor()
+cur.execute('SELECT name, url FROM gateways')
+for row in cur.fetchall():
+    print(row)
+"
+```
+
+**Verify gateway token:**
+
+The gateway token in Mission Control must match the one expected by the gateway. Check `backend/.env` and gateway configuration.
+
+## Performance Issues
+
+### Slow API responses
+
+**Check database query performance:**
+```sql
+-- Enable query timing
+\timing on
+
+-- Check slow queries
+SELECT * FROM pg_stat_statements 
+ORDER BY total_exec_time DESC 
+LIMIT 10;
+```
+
+**Check for missing indexes:**
+```sql
+SELECT schemaname, tablename, indexname 
+FROM pg_indexes 
+WHERE schemaname = 'public'
+ORDER BY tablename;
+```
+
+**Monitor active connections:**
+```sql
+SELECT count(*) FROM pg_stat_activity;
+```
+
+### High memory usage
+
+**Check process memory:**
+```bash
+ps aux | grep -E '(uvicorn|node|rq)' | awk '{print $2, $4, $11}'
+```
+
+**Check system memory:**
+```bash
+free -h
+```
+
+**Restart services if needed:**
+```bash
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+```
+
+## Debugging Tools
+
+### Enable debug logging
+
+Edit `backend/.env`:
+```bash
+LOG_LEVEL=DEBUG
+```
+
+Restart backend:
+```bash
+systemctl --user restart mission-control-backend
+```
+
+View debug logs:
+```bash
+journalctl --user -u mission-control-backend -f
+```
+
+### Query database directly
+
+```bash
+psql -h localhost -U postgres -d mission_control
+```
+
+Useful queries:
+
+```sql
+-- List all agents with status
+SELECT id, name, status, board_id, last_seen_at 
+FROM agents 
+ORDER BY updated_at DESC;
+
+-- List all tasks by board
+SELECT b.name as board_name, t.title, t.status, t.assigned_agent_id
+FROM tasks t
+JOIN boards b ON t.board_id = b.id
+ORDER BY t.created_at DESC
+LIMIT 20;
+
+-- Recent activity events
+SELECT event_type, action, message, created_at
+FROM activity_events
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- Gateway configuration
+SELECT id, name, url, workspace_root, disable_device_pairing
+FROM gateways;
+```
+
+### Test API endpoints
+
+```bash
+# Health check
+curl http://localhost:8000/healthz
+
+# OpenAPI schema
+curl http://localhost:8000/openapi.json | jq '.paths | keys'
+
+# Test authentication
+TOKEN="your-token"
+curl http://localhost:8000/api/v1/auth/bootstrap \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Getting Help
+
+If issues persist:
+
+1. **Collect logs:**
+   ```bash
+   journalctl --user -u mission-control-backend -n 200 > backend.log
+   journalctl --user -u mission-control-frontend -n 200 > frontend.log
+   journalctl --user -u mission-control-worker -n 200 > worker.log
+   ```
+
+2. **Export database state:**
+   ```bash
+   pg_dump -h localhost -U postgres mission_control > mission_control_backup.sql
+   ```
+
+3. **Check configuration:**
+   ```bash
+   cat backend/.env | grep -v 'SECRET\|TOKEN\|PASSWORD'
+   cat frontend/.env.local | grep -v 'TOKEN'
+   ```
+
+4. **System information:**
+   ```bash
+   uname -a
+   python --version
+   node --version
+   psql --version
+   redis-cli --version
+   ```

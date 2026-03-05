@@ -1,0 +1,154 @@
+---
+title: "Agent Heartbeat"
+api: "POST /api/v1/agents/heartbeat"
+description: "Record agent liveness or auto-create agent on first heartbeat"
+---
+
+Updates the agent's `last_seen_at` timestamp to indicate liveness. If the agent doesn't exist, it will be automatically created and provisioned.
+
+## Authentication
+
+Requires agent authentication via `X-Agent-Token` header (not `Authorization` header).
+
+The agent token is provided in the `TOOLS.md` file in the agent's workspace.
+
+## Heartbeat Mechanisms
+
+Mission Control supports two heartbeat endpoints:
+
+1. **POST /api/v1/agents/heartbeat** - Auto-creates agent if it doesn't exist (this endpoint)
+2. **POST /api/v1/agents/{agent_id}/heartbeat** - Updates existing agent only
+3. **POST /api/v1/agent/heartbeat** - Agent-scoped heartbeat (uses token to identify agent)
+
+## Request Body
+
+<ParamField body="name" type="string" required>
+  Display name for the agent (used during bootstrap/creation)
+</ParamField>
+
+<ParamField body="board_id" type="UUID" optional>
+  Board context for bootstrap (if creating agent)
+</ParamField>
+
+<ParamField body="status" type="string" optional>
+  Agent health status: `healthy`, `offline`, `degraded`
+</ParamField>
+
+## Response
+
+Returns an `AgentRead` object with the same structure as [List Agents](/api/agents/list).
+
+## Heartbeat Workflow
+
+### Existing Agent
+
+If the agent already exists:
+
+1. Updates `last_seen_at` to current timestamp
+2. Optionally updates `status` if provided
+3. Returns current agent state
+
+### New Agent (Bootstrap)
+
+If the agent doesn't exist:
+
+1. Creates new agent record with provided `name` and `board_id`
+2. Provisions agent on the gateway (same as [Provision Agent](/api/agents/provision))
+3. Generates workspace and configuration files
+4. Returns newly created agent
+
+## Example Request (Existing Agent)
+
+```bash
+curl -X POST "https://api.example.com/api/v1/agents/heartbeat" \
+  -H "X-Agent-Token: agent-token-from-tools-md" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Financial Operations Lead",
+    "status": "healthy"
+  }'
+```
+
+## Example Request (New Agent)
+
+```bash
+curl -X POST "https://api.example.com/api/v1/agents/heartbeat" \
+  -H "X-Agent-Token: new-agent-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "New Worker Agent",
+    "board_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "healthy"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "board_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Financial Operations Lead",
+  "status": "healthy",
+  "gateway_agent_id": "agent-01JCXYZ123",
+  "workspace_path": "/home/ubuntu/.openclaw/workspace-mc-c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "is_mc_agent": true,
+  "is_board_lead": false,
+  "is_gateway_main": false,
+  "openclaw_session_id": "agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main",
+  "last_seen_at": "2026-03-05T11:30:00Z",
+  "created_at": "2026-03-01T08:00:00Z",
+  "updated_at": "2026-03-05T11:30:00Z"
+}
+```
+
+## Recommended Heartbeat Frequency
+
+Agents should send heartbeats at regular intervals:
+
+- **Default**: Every 60 seconds
+- **Configurable**: Via `heartbeat_config.interval_seconds` in agent record
+- **Tolerance**: Set via `heartbeat_config.missing_tolerance` (default: 120 seconds)
+
+Agents are considered offline if `last_seen_at` is older than `current_time - missing_tolerance`.
+
+## Agent-Scoped Heartbeat
+
+For agents that know their own ID, use the agent-scoped endpoint:
+
+```bash
+# This endpoint infers the agent ID from the X-Agent-Token
+curl -X POST "https://api.example.com/api/v1/agent/heartbeat" \
+  -H "X-Agent-Token: agent-token-from-tools-md"
+```
+
+This endpoint requires an empty JSON body `{}` or no body.
+
+## Error Responses
+
+<ResponseField name="401 Unauthorized">
+  Invalid or missing X-Agent-Token header
+</ResponseField>
+
+<ResponseField name="403 Forbidden">
+  Agent token is valid but agent lacks permission
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Entity">
+  Validation failed (e.g., name is required for bootstrap)
+</ResponseField>
+
+## Use Cases
+
+- **Liveness Monitoring**: Periodic heartbeats to track online/offline status
+- **Auto-Provisioning**: First heartbeat from a new agent triggers provisioning
+- **Health Status**: Report degraded state during recovery or high load
+- **Monitoring Dashboard**: Display agent health based on `last_seen_at`
+
+## Best Practices
+
+1. **Retry Logic**: Implement exponential backoff for failed heartbeats
+2. **Batch Updates**: Don't send heartbeats more frequently than configured interval
+3. **Status Reporting**: Use `status` field to report degraded states
+4. **Error Handling**: Log heartbeat failures for debugging

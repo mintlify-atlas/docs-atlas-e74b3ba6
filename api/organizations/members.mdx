@@ -1,0 +1,318 @@
+---
+title: 'Organization Members'
+description: 'Manage members in your organization'
+---
+
+## List Organization Members
+
+### GET /organizations/me/members
+
+Returns a paginated list of members in the currently active organization.
+
+#### Authentication
+
+Requires organization membership.
+
+#### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Number of members to return per page
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of members to skip for pagination
+</ParamField>
+
+#### Response
+
+Returns a paginated response containing organization members.
+
+<ResponseField name="items" type="array" required>
+  Array of organization member objects
+</ResponseField>
+
+<ResponseField name="total" type="integer" required>
+  Total number of members in the organization
+</ResponseField>
+
+<ResponseField name="limit" type="integer" required>
+  Number of items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer" required>
+  Current pagination offset
+</ResponseField>
+
+#### Member Object Fields
+
+<ResponseField name="id" type="string (UUID)" required>
+  Unique identifier for the membership record
+</ResponseField>
+
+<ResponseField name="organization_id" type="string (UUID)" required>
+  ID of the organization
+</ResponseField>
+
+<ResponseField name="user_id" type="string (UUID)" required>
+  ID of the user
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  Member's role: `owner`, `admin`, or `member`
+</ResponseField>
+
+<ResponseField name="all_boards_read" type="boolean" required>
+  Whether member has read access to all boards by default
+</ResponseField>
+
+<ResponseField name="all_boards_write" type="boolean" required>
+  Whether member has write access to all boards by default
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)" required>
+  ISO 8601 timestamp when membership was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)" required>
+  ISO 8601 timestamp when membership was last updated
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Embedded user information including `id`, `email`, `name`, and `preferred_name`
+</ResponseField>
+
+<ResponseField name="board_access" type="array">
+  Array of board-specific access overrides
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.com/organizations/me/members?limit=20&offset=0" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+#### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "770e8400-e29b-41d4-a716-446655440000",
+      "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+      "user_id": "880e8400-e29b-41d4-a716-446655440000",
+      "role": "owner",
+      "all_boards_read": true,
+      "all_boards_write": true,
+      "created_at": "2026-03-01T10:00:00.000Z",
+      "updated_at": "2026-03-01T10:00:00.000Z",
+      "user": {
+        "id": "880e8400-e29b-41d4-a716-446655440000",
+        "email": "owner@example.com",
+        "name": "Jane Doe",
+        "preferred_name": "Jane"
+      },
+      "board_access": []
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+---
+
+## Get Organization Member
+
+### GET /organizations/me/members/{member_id}
+
+Retrieve details about a specific organization member.
+
+#### Authentication
+
+Requires organization membership. Non-admin members can only view their own membership details.
+
+#### Path Parameters
+
+<ParamField path="member_id" type="string (UUID)" required>
+  ID of the organization member to retrieve
+</ParamField>
+
+#### Response
+
+Returns a member object (same structure as list endpoint) including board access overrides.
+
+#### Error Responses
+
+<ResponseField name="403 Forbidden">
+  Non-admin users attempting to view other members' details
+</ResponseField>
+
+<ResponseField name="404 Not Found">
+  Member not found or does not belong to the organization
+</ResponseField>
+
+---
+
+## Update Organization Member
+
+### PATCH /organizations/me/members/{member_id}
+
+Update a member's role in the organization. Requires admin privileges.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Path Parameters
+
+<ParamField path="member_id" type="string (UUID)" required>
+  ID of the organization member to update
+</ParamField>
+
+#### Request Body
+
+<ParamField body="role" type="string">
+  New role for the member: `owner`, `admin`, or `member`
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X PATCH "https://api.openclaw.com/organizations/me/members/770e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "admin"
+  }'
+```
+
+---
+
+## Update Member Board Access
+
+### PUT /organizations/me/members/{member_id}/access
+
+Update board-level access permissions for a member. Requires admin privileges.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Path Parameters
+
+<ParamField path="member_id" type="string (UUID)" required>
+  ID of the organization member to update
+</ParamField>
+
+#### Request Body
+
+<ParamField body="all_boards_read" type="boolean" default="false">
+  Grant read access to all boards
+</ParamField>
+
+<ParamField body="all_boards_write" type="boolean" default="false">
+  Grant write access to all boards
+</ParamField>
+
+<ParamField body="board_access" type="array" default="[]">
+  Array of board-specific access overrides
+</ParamField>
+
+#### Board Access Specification
+
+<ParamField body="board_access[].board_id" type="string (UUID)" required>
+  ID of the board
+</ParamField>
+
+<ParamField body="board_access[].can_read" type="boolean" default="true">
+  Read permission for this specific board
+</ParamField>
+
+<ParamField body="board_access[].can_write" type="boolean" default="false">
+  Write permission for this specific board
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X PUT "https://api.openclaw.com/organizations/me/members/770e8400-e29b-41d4-a716-446655440000/access" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "all_boards_read": false,
+    "all_boards_write": false,
+    "board_access": [
+      {
+        "board_id": "990e8400-e29b-41d4-a716-446655440000",
+        "can_read": true,
+        "can_write": true
+      }
+    ]
+  }'
+```
+
+#### Error Responses
+
+<ResponseField name="422 Unprocessable Content">
+  One or more board IDs do not belong to the organization
+</ResponseField>
+
+---
+
+## Remove Organization Member
+
+### DELETE /organizations/me/members/{member_id}
+
+Remove a member from the organization. Requires admin privileges.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Path Parameters
+
+<ParamField path="member_id" type="string (UUID)" required>
+  ID of the organization member to remove
+</ParamField>
+
+#### Response
+
+Returns a success confirmation.
+
+```json
+{
+  "ok": true
+}
+```
+
+#### Example Request
+
+```bash
+curl -X DELETE "https://api.openclaw.com/organizations/me/members/770e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+#### Error Responses
+
+<ResponseField name="403 Forbidden">
+  - Attempting to remove yourself
+  - Non-owners attempting to remove owners
+</ResponseField>
+
+<ResponseField name="404 Not Found">
+  Member not found or does not belong to the organization
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Content">
+  Attempting to remove the last owner from the organization
+</ResponseField>
+
+#### Notes
+
+- Members cannot remove themselves from organizations
+- Only owners can remove other owners
+- Organizations must have at least one owner at all times
+- When a member is removed, their board access records are also deleted
+- If the removed user had this organization as their active organization, it will automatically switch to another membership or null

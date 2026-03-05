@@ -1,0 +1,178 @@
+---
+title: 'List Boards'
+description: 'Retrieve a paginated list of boards visible to the current organization member'
+---
+
+## Endpoint
+
+```
+GET /api/v1/boards
+```
+
+List boards visible to the current organization member. Results can be filtered by gateway or board group and are paginated using limit/offset parameters.
+
+## Query Parameters
+
+<ParamField query="gateway_id" type="string (UUID)" optional>
+  Filter boards by gateway ID. Only returns boards associated with the specified gateway.
+</ParamField>
+
+<ParamField query="board_group_id" type="string (UUID)" optional>
+  Filter boards by board group ID. Only returns boards that belong to the specified group.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of boards to return per page.
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of boards to skip before starting to return results.
+</ParamField>
+
+## Response
+
+Returns a paginated list of boards sorted alphabetically by name (case-insensitive), then by creation date (descending).
+
+<ResponseField name="items" type="array">
+  Array of board objects
+  
+  <ResponseField name="id" type="string (UUID)">
+    Unique identifier for the board
+  </ResponseField>
+  
+  <ResponseField name="organization_id" type="string (UUID)">
+    Organization that owns this board
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Display name of the board
+  </ResponseField>
+  
+  <ResponseField name="slug" type="string">
+    URL-friendly identifier
+  </ResponseField>
+  
+  <ResponseField name="description" type="string">
+    Detailed description of the board's purpose
+  </ResponseField>
+  
+  <ResponseField name="gateway_id" type="string (UUID)">
+    Gateway associated with this board
+  </ResponseField>
+  
+  <ResponseField name="board_group_id" type="string (UUID)" optional>
+    Board group this board belongs to, if any
+  </ResponseField>
+  
+  <ResponseField name="board_type" type="string" default="goal">
+    Type of board (e.g., "goal")
+  </ResponseField>
+  
+  <ResponseField name="objective" type="string" optional>
+    Primary objective for goal boards
+  </ResponseField>
+  
+  <ResponseField name="success_metrics" type="object" optional>
+    Key-value pairs defining success criteria
+  </ResponseField>
+  
+  <ResponseField name="target_date" type="string (datetime)" optional>
+    Target completion date in ISO 8601 format
+  </ResponseField>
+  
+  <ResponseField name="goal_confirmed" type="boolean" default="false">
+    Whether the goal has been confirmed
+  </ResponseField>
+  
+  <ResponseField name="goal_source" type="string" optional>
+    Source or origin of the goal
+  </ResponseField>
+  
+  <ResponseField name="require_approval_for_done" type="boolean" default="true">
+    Whether tasks require approval before marking as done
+  </ResponseField>
+  
+  <ResponseField name="require_review_before_done" type="boolean" default="false">
+    Whether tasks require review before completion
+  </ResponseField>
+  
+  <ResponseField name="block_status_changes_with_pending_approval" type="boolean" default="false">
+    Whether status changes are blocked when approval is pending
+  </ResponseField>
+  
+  <ResponseField name="only_lead_can_change_status" type="boolean" default="false">
+    Whether only the board lead can change task status
+  </ResponseField>
+  
+  <ResponseField name="max_agents" type="integer" default="1">
+    Maximum number of agents allowed on this board
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string (datetime)">
+    When the board was created (ISO 8601 format)
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string (datetime)">
+    When the board was last updated (ISO 8601 format)
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of boards matching the filter criteria
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Maximum number of items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer">
+  Number of items skipped
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/boards?gateway_id=550e8400-e29b-41d4-a716-446655440000&limit=20" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+## Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Q1 Product Launch",
+      "slug": "q1-product-launch",
+      "description": "Launch new product features for Q1 2026",
+      "gateway_id": "550e8400-e29b-41d4-a716-446655440000",
+      "board_group_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "board_type": "goal",
+      "objective": "Successfully launch product with 95% uptime",
+      "success_metrics": {
+        "uptime": "95%",
+        "user_satisfaction": "4.5/5"
+      },
+      "target_date": "2026-03-31T23:59:59Z",
+      "goal_confirmed": true,
+      "goal_source": "Product roadmap Q1 2026",
+      "require_approval_for_done": true,
+      "require_review_before_done": false,
+      "block_status_changes_with_pending_approval": false,
+      "only_lead_can_change_status": false,
+      "max_agents": 3,
+      "created_at": "2026-01-15T10:30:00Z",
+      "updated_at": "2026-02-20T14:45:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+## Authorization
+
+Requires organization member authentication. Users can only see boards they have read access to based on their organization membership.

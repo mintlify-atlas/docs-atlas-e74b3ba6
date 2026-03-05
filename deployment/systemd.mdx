@@ -1,0 +1,503 @@
+---
+title: Systemd Deployment
+description: Deploy OpenClaw Mission Control using systemd services for native host execution
+---
+
+This guide covers deploying Mission Control as native systemd services without Docker. This approach is used in production on the reference deployment server and provides more direct control over process management.
+
+## Overview
+
+Running Mission Control with systemd provides:
+
+- **Direct execution**: Services run natively on the host without container overhead
+- **System integration**: Native systemd logging, restart policies, and dependency management
+- **Resource efficiency**: Lower memory footprint compared to containerized deployment
+- **Simplified debugging**: Direct access to processes and file system
+
+## Prerequisites
+
+- Ubuntu 20.04+ or similar systemd-based Linux distribution
+- PostgreSQL 16 (installed and running)
+- Redis 7 (installed and running)
+- Python 3.12+ with `uv` package manager
+- Node.js 20+ with `npm`
+- Non-root user account (services run in user mode)
+
+## System Dependencies
+
+### Install PostgreSQL 16
+
+```bash
+sudo apt update
+sudo apt install -y postgresql-16 postgresql-client-16
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+```
+
+Create the database:
+
+```bash
+sudo -u postgres psql -c "CREATE DATABASE mission_control;"
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your-secure-password';"
+```
+
+### Install Redis 7
+
+```bash
+sudo apt install -y redis-server
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+```
+
+### Install Python and uv
+
+```bash
+# Install Python 3.12
+sudo apt install -y python3.12 python3.12-venv python3.12-dev
+
+# Install uv package manager
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Install Node.js 20
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+## Application Setup
+
+### 1. Clone Repository
+
+```bash
+cd ~
+git clone https://github.com/abhi1693/openclaw-mission-control.git mission-control
+cd mission-control
+```
+
+### 2. Backend Configuration
+
+```bash
+cd ~/mission-control/backend
+cp .env.example .env
+```
+
+Edit `~/mission-control/backend/.env`:
+
+```bash
+ENVIRONMENT=dev
+LOG_LEVEL=INFO
+LOG_FORMAT=text
+LOG_USE_UTC=false
+REQUEST_LOG_SLOW_MS=1000
+REQUEST_LOG_INCLUDE_HEALTH=false
+
+# Database connection (adjust credentials)
+DATABASE_URL=postgresql+psycopg://postgres:your-secure-password@localhost:5432/mission_control
+
+# CORS origins (add your server IP/domain)
+CORS_ORIGINS=http://localhost:3000,http://YOUR_SERVER_IP:3000
+
+# Base URL for API (used in webhooks, emails, etc.)
+BASE_URL=http://YOUR_SERVER_IP:8000
+
+# Authentication (REQUIRED: min 50 characters)
+AUTH_MODE=local
+LOCAL_AUTH_TOKEN=your-very-long-secure-random-token-at-least-50-characters-long
+
+# Database migrations (disable auto-migrate in production)
+DB_AUTO_MIGRATE=false
+
+# Redis queue configuration
+RQ_REDIS_URL=redis://localhost:6379/0
+RQ_QUEUE_NAME=default
+RQ_DISPATCH_THROTTLE_SECONDS=15.0
+RQ_DISPATCH_MAX_RETRIES=3
+
+# Gateway compatibility
+GATEWAY_MIN_VERSION=2026.02.9
+```
+
+### 3. Frontend Configuration
+
+```bash
+cd ~/mission-control/frontend
+cp .env.example .env.local
+```
+
+Edit `~/mission-control/frontend/.env.local`:
+
+```bash
+# REQUIRED: Must be reachable from browser (use server IP or domain)
+NEXT_PUBLIC_API_URL=http://YOUR_SERVER_IP:8000
+
+# Must match backend AUTH_MODE
+NEXT_PUBLIC_AUTH_MODE=local
+```
+
+<Warning>
+  The `NEXT_PUBLIC_API_URL` must be accessible from the user's browser, not just localhost. Use your server's public IP or domain name.
+</Warning>
+
+### 4. Install Dependencies
+
+```bash
+# Backend dependencies
+cd ~/mission-control/backend
+uv sync --extra dev
+
+# Frontend dependencies
+cd ~/mission-control/frontend
+npm install
+
+# Build frontend for production
+npm run build
+```
+
+### 5. Run Database Migrations
+
+```bash
+cd ~/mission-control/backend
+.venv/bin/alembic upgrade head
+```
+
+See [Database Migrations](/deployment/database-migrations) for more details.
+
+## Systemd Service Files
+
+Mission Control requires three systemd user services. Reference implementations are in `scripts/`:
+
+### Backend Service
+
+Create `~/.config/systemd/user/mission-control-backend.service`:
+
+```ini
+[Unit]
+Description=OpenClaw Mission Control Backend (FastAPI)
+After=postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+WorkingDirectory=/home/YOUR_USERNAME/mission-control/backend
+ExecStart=/home/YOUR_USERNAME/mission-control/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+KillMode=process
+Environment=HOME=/home/YOUR_USERNAME
+Environment=TMPDIR=/tmp
+Environment=PATH=/home/YOUR_USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+### Frontend Service
+
+Create `~/.config/systemd/user/mission-control-frontend.service`:
+
+```ini
+[Unit]
+Description=OpenClaw Mission Control Frontend (Next.js)
+After=mission-control-backend.service
+Wants=mission-control-backend.service
+
+[Service]
+WorkingDirectory=/home/YOUR_USERNAME/mission-control/frontend
+ExecStart=/usr/bin/env npm run start -- --hostname 0.0.0.0 --port 3000
+Restart=always
+RestartSec=5
+KillMode=process
+Environment=HOME=/home/YOUR_USERNAME
+Environment=TMPDIR=/tmp
+Environment=PATH=/home/YOUR_USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+<Info>
+  The frontend service is available at `scripts/mission-control-frontend.service` in the repository.
+</Info>
+
+### Worker Service
+
+Create `~/.config/systemd/user/mission-control-worker.service`:
+
+```ini
+[Unit]
+Description=OpenClaw Mission Control Background Worker (RQ)
+After=mission-control-backend.service
+Wants=mission-control-backend.service
+
+[Service]
+WorkingDirectory=/home/YOUR_USERNAME/mission-control/backend
+ExecStart=/home/YOUR_USERNAME/mission-control/backend/.venv/bin/python /home/YOUR_USERNAME/mission-control/scripts/rq worker
+Restart=always
+RestartSec=5
+KillMode=process
+Environment=HOME=/home/YOUR_USERNAME
+Environment=TMPDIR=/tmp
+Environment=PATH=/home/YOUR_USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+<Info>
+  The worker service is available at `scripts/mission-control-worker.service` in the repository.
+</Info>
+
+**Replace `YOUR_USERNAME`** with your actual Linux username in all three files.
+
+## Service Management
+
+### Enable and Start Services
+
+```bash
+# Reload systemd configuration
+systemctl --user daemon-reload
+
+# Enable services to start on boot
+systemctl --user enable mission-control-backend
+systemctl --user enable mission-control-frontend
+systemctl --user enable mission-control-worker
+
+# Start all services
+systemctl --user start mission-control-backend
+systemctl --user start mission-control-frontend
+systemctl --user start mission-control-worker
+```
+
+### Enable Linger (Optional)
+
+To keep user services running after logout:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+### Check Service Status
+
+```bash
+# Check all Mission Control services
+systemctl --user status mission-control-{backend,frontend,worker}
+
+# Check individual service
+systemctl --user status mission-control-backend
+```
+
+### View Logs
+
+```bash
+# Follow logs in real-time
+journalctl --user -u mission-control-backend -f
+journalctl --user -u mission-control-frontend -f
+journalctl --user -u mission-control-worker -f
+
+# Last 50 lines
+journalctl --user -u mission-control-backend -n 50 --no-pager
+
+# Logs since today
+journalctl --user -u mission-control-backend --since today
+
+# Logs with specific priority (error and above)
+journalctl --user -u mission-control-backend -p err
+```
+
+### Restart Services
+
+```bash
+# Restart all services
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+
+# Restart single service
+systemctl --user restart mission-control-backend
+```
+
+### Stop Services
+
+```bash
+# Stop all services
+systemctl --user stop mission-control-backend mission-control-frontend mission-control-worker
+
+# Stop single service
+systemctl --user stop mission-control-worker
+```
+
+## Deployment Workflow
+
+When updating the application:
+
+```bash
+cd ~/mission-control
+
+# 1. Pull latest code
+git pull
+
+# 2. Update backend dependencies
+cd backend
+uv sync --extra dev
+
+# 3. Run new migrations (if any)
+.venv/bin/alembic upgrade head
+
+# 4. Update frontend dependencies and rebuild
+cd ../frontend
+npm install
+npm run build
+
+# 5. Restart services
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+```
+
+Refer to the production deployment guide in `DEPLOYMENT.md` for the complete workflow used on the reference server.
+
+## Production Configuration
+
+### Firewall Rules
+
+Allow external access to frontend and API:
+
+```bash
+sudo ufw allow 3000/tcp comment "Mission Control Frontend"
+sudo ufw allow 8000/tcp comment "Mission Control API"
+```
+
+### Reverse Proxy (Nginx)
+
+For production, use nginx with SSL:
+
+```nginx
+server {
+    listen 80;
+    server_name mission-control.example.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name mission-control.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    # Frontend
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # API
+    location /api {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Log Rotation
+
+Systemd journal auto-rotates, but you can configure retention:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/mission-control.conf <<EOF
+[Journal]
+SystemMaxUse=500M
+MaxRetentionSec=7day
+EOF
+
+sudo systemctl restart systemd-journald
+```
+
+## Troubleshooting
+
+### Port 3000 Already in Use
+
+If the frontend fails with `EADDRINUSE`:
+
+```bash
+# Find and kill the process using port 3000
+fuser -k 3000/tcp
+sleep 2
+systemctl --user restart mission-control-frontend
+```
+
+### Service Won't Start
+
+Check for configuration errors:
+
+```bash
+# Validate service file syntax
+systemctl --user cat mission-control-backend
+
+# Check for startup errors
+journalctl --user -u mission-control-backend -n 100 --no-pager
+
+# Manually test the command
+cd ~/mission-control/backend
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### Database Connection Errors
+
+Verify PostgreSQL is accessible:
+
+```bash
+# Test connection
+psql postgresql://postgres:your-password@localhost:5432/mission_control -c "SELECT 1;"
+
+# Check DATABASE_URL in backend .env
+grep DATABASE_URL ~/mission-control/backend/.env
+```
+
+### Worker Not Processing Jobs
+
+Check Redis connectivity and worker logs:
+
+```bash
+# Test Redis
+redis-cli ping
+
+# Check worker logs
+journalctl --user -u mission-control-worker -n 50 --no-pager
+
+# Manually run worker
+cd ~/mission-control/backend
+.venv/bin/python ../scripts/rq worker
+```
+
+## Quick Verification Checklist
+
+Run these commands to verify the deployment:
+
+```bash
+# 1. Backend health check
+curl -s http://localhost:8000/healthz
+
+# 2. Test authentication
+curl -s http://localhost:8000/api/v1/organizations/me/member \
+  -H "Authorization: Bearer YOUR_AUTH_TOKEN" | python3 -m json.tool
+
+# 3. Frontend responds
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/boards
+
+# 4. All services running
+systemctl --user is-active mission-control-backend mission-control-frontend mission-control-worker
+```
+
+All checks should return success.
+
+## Next Steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Manage database migrations](/deployment/database-migrations)
+- Review the production deployment in `DEPLOYMENT.md`

@@ -1,0 +1,80 @@
+---
+title: 'Create Organization'
+description: 'Create a new organization and become its owner'
+---
+
+## POST /organizations
+
+Creates a new organization with the authenticated user as the owner. The newly created organization automatically becomes the user's active organization.
+
+### Authentication
+
+Requires authentication. Returns 401 if user is not authenticated.
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Name of the organization. Must be unique (case-insensitive) and not empty after trimming whitespace.
+</ParamField>
+
+### Response
+
+Returns the created organization object.
+
+<ResponseField name="id" type="string (UUID)" required>
+  Unique identifier for the organization
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Name of the organization
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)" required>
+  ISO 8601 timestamp when the organization was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)" required>
+  ISO 8601 timestamp when the organization was last updated
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.com/organizations" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Acme Corp",
+  "created_at": "2026-03-05T12:34:56.789Z",
+  "updated_at": "2026-03-05T12:34:56.789Z"
+}
+```
+
+### Error Responses
+
+<ResponseField name="401 Unauthorized">
+  User is not authenticated
+</ResponseField>
+
+<ResponseField name="409 Conflict">
+  An organization with this name already exists (case-insensitive match)
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Content">
+  Organization name is empty or contains only whitespace
+</ResponseField>
+
+### Notes
+
+- The creator automatically receives the `owner` role with full board access (`all_boards_read` and `all_boards_write` set to `true`)
+- The new organization is automatically set as the user's active organization
+- Organization names are checked for uniqueness using case-insensitive comparison

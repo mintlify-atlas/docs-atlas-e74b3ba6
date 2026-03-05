@@ -1,0 +1,274 @@
+---
+title: Skills Marketplace
+api: GET /api/skills/marketplace
+---
+
+Browse and manage skills in the organization marketplace.
+
+## Authentication
+
+Requires organization admin authentication.
+
+## Endpoints
+
+### List Skills
+
+`GET /api/skills/marketplace`
+
+List marketplace skills with installation status for a specific gateway.
+
+#### Query Parameters
+
+<ParamField query="gateway_id" type="string" required>
+  Gateway UUID to check installation status
+</ParamField>
+
+<ParamField query="search" type="string" optional>
+  Search skills by name, description, category, risk, or source
+</ParamField>
+
+<ParamField query="category" type="string" optional>
+  Filter by category. Use `uncategorized` for skills without a category
+</ParamField>
+
+<ParamField query="risk" type="string" optional>
+  Filter by risk level. Use `uncategorized` for skills without risk classification
+</ParamField>
+
+<ParamField query="pack_id" type="string" optional>
+  Filter skills from a specific skill pack
+</ParamField>
+
+<ParamField query="limit" type="integer" optional>
+  Number of items per page (1-200)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Pagination offset
+</ParamField>
+
+#### Response
+
+<ResponseField name="skills" type="array">
+  Array of skill cards
+  
+  <ResponseField name="id" type="string">
+    Skill UUID
+  </ResponseField>
+  
+  <ResponseField name="organization_id" type="string">
+    Organization UUID
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Skill display name
+  </ResponseField>
+  
+  <ResponseField name="description" type="string" optional>
+    Skill description
+  </ResponseField>
+  
+  <ResponseField name="category" type="string" optional>
+    Skill category (e.g., `devops`, `data`, `communication`)
+  </ResponseField>
+  
+  <ResponseField name="risk" type="string" optional>
+    Risk level (e.g., `low`, `medium`, `high`)
+  </ResponseField>
+  
+  <ResponseField name="source" type="string" optional>
+    Source label (e.g., relative path in pack repository)
+  </ResponseField>
+  
+  <ResponseField name="source_url" type="string">
+    GitHub tree URL pointing to skill location
+  </ResponseField>
+  
+  <ResponseField name="metadata" type="object">
+    Additional metadata (discovery mode, pack branch, etc.)
+  </ResponseField>
+  
+  <ResponseField name="installed" type="boolean">
+    Whether the skill is installed on the specified gateway
+  </ResponseField>
+  
+  <ResponseField name="installed_at" type="string" optional>
+    ISO 8601 timestamp when installed
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/skills/marketplace?gateway_id=550e8400-e29b-41d4-a716-446655440000&category=devops" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+#### Example Response
+
+```json
+[
+  {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "organization_id": "8b9e6679-7425-40de-944b-e07fc1f90ae8",
+    "name": "Kubernetes Deploy",
+    "description": "Deploy applications to Kubernetes clusters",
+    "category": "devops",
+    "risk": "medium",
+    "source": "kubernetes/deploy",
+    "source_url": "https://github.com/openclaw/skills/tree/main/kubernetes/deploy",
+    "metadata": {
+      "discovery_mode": "skills_index",
+      "pack_branch": "main"
+    },
+    "installed": true,
+    "installed_at": "2026-03-01T12:00:00Z",
+    "created_at": "2026-02-28T10:00:00Z",
+    "updated_at": "2026-03-01T10:00:00Z"
+  }
+]
+```
+
+### Add Skill
+
+`POST /api/skills/marketplace`
+
+Manually register a skill URL in the marketplace.
+
+#### Request Body
+
+<ParamField body="source_url" type="string" required>
+  HTTPS URL to skill repository or tree location
+</ParamField>
+
+<ParamField body="name" type="string" optional>
+  Skill name (inferred from URL if not provided)
+</ParamField>
+
+<ParamField body="description" type="string" optional>
+  Skill description
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/skills/marketplace" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_url": "https://github.com/myorg/skills/tree/main/custom-skill",
+    "name": "Custom Skill",
+    "description": "A custom skill for my organization"
+  }'
+```
+
+### Install Skill
+
+`POST /api/skills/marketplace/{skill_id}/install`
+
+Install a skill to a gateway by dispatching installation instructions to the gateway agent.
+
+#### Query Parameters
+
+<ParamField query="gateway_id" type="string" required>
+  Gateway UUID where skill should be installed
+</ParamField>
+
+#### Response
+
+<ResponseField name="ok" type="boolean">
+  Always true on success
+</ResponseField>
+
+<ResponseField name="skill_id" type="string">
+  Skill UUID
+</ResponseField>
+
+<ResponseField name="gateway_id" type="string">
+  Gateway UUID
+</ResponseField>
+
+<ResponseField name="installed" type="boolean">
+  Always true for install action
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/skills/marketplace/7c9e6679-7425-40de-944b-e07fc1f90ae7/install?gateway_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+#### Example Response
+
+```json
+{
+  "ok": true,
+  "skill_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "gateway_id": "550e8400-e29b-41d4-a716-446655440000",
+  "installed": true
+}
+```
+
+### Uninstall Skill
+
+`POST /api/skills/marketplace/{skill_id}/uninstall`
+
+Uninstall a skill from a gateway.
+
+#### Query Parameters
+
+<ParamField query="gateway_id" type="string" required>
+  Gateway UUID where skill should be uninstalled
+</ParamField>
+
+#### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/skills/marketplace/7c9e6679-7425-40de-944b-e07fc1f90ae7/uninstall?gateway_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Delete Skill
+
+`DELETE /api/skills/marketplace/{skill_id}`
+
+Remove a skill from the marketplace catalog and all gateway installations.
+
+#### Example Request
+
+```bash
+curl -X DELETE "https://api.openclaw.ai/api/skills/marketplace/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Installation Process
+
+When you install a skill, Mission Control:
+
+1. Validates the gateway has a configured workspace root
+2. Dispatches an installation message to the gateway agent
+3. Records the installation state in the database
+
+The gateway agent receives instructions like:
+
+```
+MISSION CONTROL SKILL INSTALL REQUEST
+Skill name: Kubernetes Deploy
+Skill source URL: https://github.com/openclaw/skills/tree/main/kubernetes/deploy
+Install destination: /workspace/skills
+
+Actions:
+1. Ensure the install destination exists.
+2. Install or update the skill from the source URL into the destination.
+3. Verify the skill is discoverable by the runtime.
+4. Reply with success or failure details.
+```

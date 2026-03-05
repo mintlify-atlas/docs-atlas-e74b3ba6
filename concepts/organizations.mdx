@@ -1,0 +1,421 @@
+---
+title: Organizations
+description: Multi-tenant structure and membership management in Mission Control
+---
+
+## Overview
+
+Organizations are the top-level tenant entity in Mission Control. Every resource (boards, agents, gateways, tasks) belongs to an organization. Organizations provide:
+
+- **Multi-tenancy**: Isolated data and resources per organization
+- **Access control**: Role-based membership with owner/admin/member roles
+- **Resource governance**: Organization-level policies and limits
+- **Team collaboration**: Multiple users can belong to the same organization
+
+## Data Model
+
+### Organization Table
+
+Location: `backend/app/models/organizations.py`
+
+```python
+class Organization(QueryModel, table=True):
+    __tablename__ = "organizations"
+    
+    id: UUID                    # Primary key
+    name: str                   # Organization display name
+    created_at: datetime        # Creation timestamp
+    updated_at: datetime        # Last update timestamp
+```
+
+**Fields**:
+- `id` - Unique identifier (UUID)
+- `name` - Human-readable organization name (indexed)
+- `created_at` - Timestamp when organization was created
+- `updated_at` - Timestamp of last modification
+
+### Organization Member Table
+
+Location: `backend/app/models/organization_members.py`
+
+```python
+class OrganizationMember(QueryModel, table=True):
+    __tablename__ = "organization_members"
+    
+    id: UUID                      # Primary key
+    organization_id: UUID         # FK to organizations.id
+    user_id: UUID                 # FK to users.id
+    role: str = "member"          # Role: owner, admin, or member
+    all_boards_read: bool = False # Grant read access to all boards
+    all_boards_write: bool = False # Grant write access to all boards
+    created_at: datetime
+    updated_at: datetime
+```
+
+**Unique Constraint**: `(organization_id, user_id)` - A user can be a member of an organization only once.
+
+## Membership Roles
+
+Mission Control uses three role levels:
+
+### Owner
+
+- Full administrative access
+- Can delete organization
+- Can manage all members
+- Can invite new members
+- Can create/delete gateways
+- Can create/delete agents
+- Can access all boards
+- Typically the organization creator
+
+### Admin
+
+- Administrative access (same as owner)
+- **Cannot delete the organization**
+- Can manage members
+- Can invite new members
+- Can create/delete gateways
+- Can create/delete agents
+- Can access all boards
+
+### Member
+
+- Standard user access
+- Can view and create boards
+- Can view and create tasks
+- **Cannot access agent management**
+- **Cannot access gateway management**
+- Board access controlled by board permissions
+
+### Role Check Logic
+
+Frontend code:
+```typescript
+const isAdmin = role === "owner" || role === "admin";
+```
+
+Backend code:
+```python
+def is_admin(role: str) -> bool:
+    return role in ["owner", "admin"]
+```
+
+## API Endpoints
+
+Base path: `/api/v1/organizations`
+
+### List Organizations
+
+```http
+GET /api/v1/organizations
+Authorization: Bearer <token>
+```
+
+Returns all organizations the authenticated user belongs to.
+
+**Response**:
+```json
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Acme Corp",
+    "created_at": "2026-01-15T10:30:00Z",
+    "updated_at": "2026-01-15T10:30:00Z"
+  }
+]
+```
+
+### Create Organization
+
+```http
+POST /api/v1/organizations
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "name": "New Organization"
+}
+```
+
+**Behavior**: The creating user automatically becomes the organization **owner**.
+
+### Get Organization
+
+```http
+GET /api/v1/organizations/{id}
+Authorization: Bearer <token>
+```
+
+### Update Organization
+
+```http
+PATCH /api/v1/organizations/{id}
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "name": "Updated Name"
+}
+```
+
+**Required role**: owner or admin
+
+### Delete Organization
+
+```http
+DELETE /api/v1/organizations/{id}
+Authorization: Bearer <token>
+```
+
+**Required role**: owner only
+
+**Side effects**:
+- Deletes all associated boards
+- Deletes all associated tasks
+- Deletes all associated agents
+- Deletes all associated gateways
+- Removes all membership records
+
+### Get Current User's Membership
+
+```http
+GET /api/v1/organizations/me/member
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+{
+  "id": "mem-uuid",
+  "organization_id": "org-uuid",
+  "user_id": "user-uuid",
+  "role": "admin",
+  "all_boards_read": false,
+  "all_boards_write": false,
+  "created_at": "2026-01-15T10:30:00Z",
+  "updated_at": "2026-01-15T10:30:00Z"
+}
+```
+
+The `role` field is used throughout the UI to control access:
+- `isAdmin = role === "owner" || role === "admin"`
+- If `!isAdmin`, hide agent/gateway management pages
+
+### List Organization Members
+
+```http
+GET /api/v1/organizations/{id}/members
+Authorization: Bearer <token>
+```
+
+**Required role**: member or higher
+
+### Add Member
+
+```http
+POST /api/v1/organizations/{id}/members
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "user_id": "user-uuid",
+  "role": "member"
+}
+```
+
+**Required role**: admin or owner
+
+### Remove Member
+
+```http
+DELETE /api/v1/organizations/{id}/members/{user_id}
+Authorization: Bearer <token>
+```
+
+**Required role**: admin or owner
+
+**Note**: Cannot remove yourself or the last owner.
+
+### Send Invitation
+
+```http
+POST /api/v1/organizations/{id}/invites
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "role": "member"
+}
+```
+
+**Required role**: admin or owner
+
+## Relationships
+
+```
+Organization (1)
+    ├─→ (many) OrganizationMembers
+    ├─→ (many) Boards
+    ├─→ (many) Agents
+    ├─→ (many) Gateways
+    ├─→ (many) BoardGroups
+    └─→ (many) Tags
+```
+
+Each resource is scoped to a single organization. Cross-organization access is not supported.
+
+## Database Queries
+
+### Find User's Organizations
+
+```sql
+SELECT o.* 
+FROM organizations o
+JOIN organization_members om ON o.id = om.organization_id
+WHERE om.user_id = '<user-uuid>'
+ORDER BY o.name;
+```
+
+### Check User Role
+
+```sql
+SELECT role 
+FROM organization_members
+WHERE organization_id = '<org-uuid>' 
+  AND user_id = '<user-uuid>';
+```
+
+### Count Organization Resources
+
+```sql
+-- Boards
+SELECT COUNT(*) FROM boards WHERE organization_id = '<org-uuid>';
+
+-- Agents
+SELECT COUNT(*) FROM agents a
+JOIN boards b ON a.board_id = b.id
+WHERE b.organization_id = '<org-uuid>';
+
+-- Tasks
+SELECT COUNT(*) FROM tasks t
+JOIN boards b ON t.board_id = b.id
+WHERE b.organization_id = '<org-uuid>';
+```
+
+## Frontend Usage
+
+### Check Admin Access
+
+```typescript
+import { useGetCurrentOrganizationMember } from '@/api/generated/organizations';
+
+function useIsAdmin() {
+  const { data: member } = useGetCurrentOrganizationMember();
+  return member?.role === 'owner' || member?.role === 'admin';
+}
+```
+
+### Protect Admin Routes
+
+```typescript
+function AgentsPage() {
+  const isAdmin = useIsAdmin();
+  
+  if (!isAdmin) {
+    return (
+      <div>
+        Only organization owners and admins can access agents.
+      </div>
+    );
+  }
+  
+  return <AgentsList />;
+}
+```
+
+## Best Practices
+
+### 1. Organization Creation
+
+- Create one organization per team or project
+- Use descriptive organization names
+- Assign at least two owners for backup
+
+### 2. Membership Management
+
+- Use "member" role by default
+- Grant "admin" only when needed
+- Regularly audit member list
+- Remove inactive members
+
+### 3. Role Assignment
+
+- **Owner**: Team leads, project managers
+- **Admin**: Senior engineers, operations leads
+- **Member**: Developers, analysts
+
+### 4. Resource Governance
+
+- Set reasonable `max_agents` limits per board
+- Monitor organization resource usage
+- Use board groups to organize related boards
+
+## Common Workflows
+
+### New Team Setup
+
+1. Create organization: `POST /api/v1/organizations`
+2. Invite team members: `POST /api/v1/organizations/{id}/invites`
+3. Create gateway: `POST /api/v1/gateways`
+4. Create first board: `POST /api/v1/boards`
+
+### Member Onboarding
+
+1. Admin sends invite: `POST /api/v1/organizations/{id}/invites`
+2. User accepts invite (creates membership)
+3. User completes profile (name, timezone)
+4. User gains access to organization resources
+
+### Access Control Update
+
+1. Admin reviews member list: `GET /api/v1/organizations/{id}/members`
+2. Update member role if needed: `PATCH /api/v1/organizations/{id}/members/{user_id}`
+3. Or remove member: `DELETE /api/v1/organizations/{id}/members/{user_id}`
+
+## Troubleshooting
+
+### "Only organization owners and admins can access agents"
+
+**Cause**: User has "member" role
+
+**Solution**: 
+1. Check role: `GET /api/v1/organizations/me/member`
+2. If member, contact admin to upgrade role
+3. If admin/owner, check CORS configuration and token
+
+### Cannot Create Organization
+
+**Cause**: Usually authentication issue
+
+**Solution**:
+1. Verify token: `GET /api/v1/users/me`
+2. Check auth mode: `AUTH_MODE=local` requires `LOCAL_AUTH_TOKEN`
+3. Ensure onboarding complete (name + timezone set)
+
+### Member Not Seeing Resources
+
+**Cause**: Organization-scoped queries filter by membership
+
+**Solution**:
+1. Verify membership: `GET /api/v1/organizations/{id}/members`
+2. Check board permissions: `all_boards_read` or explicit board access
+3. Review activity logs for access denial events
+
+## Related Concepts
+
+- [Boards](/concepts/boards) - Organization-scoped workspaces
+- [Agents](/concepts/agents) - Managed by organization admins
+- [Gateways](/concepts/gateways) - Organization-level integration
+- [Architecture](/concepts/architecture) - System design and auth model

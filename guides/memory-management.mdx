@@ -1,0 +1,537 @@
+---
+title: Memory Management
+description: Store and retrieve board memory for agent context
+---
+
+# Memory Management
+
+Board memory provides persistent context for agents. It includes chat history, webhook events, task context, and custom key-value storage.
+
+## Memory Types
+
+### Chat Memory
+
+Conversations between humans and agents:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "@devops can you check the production logs?",
+    "tags": ["chat"],
+    "source": "User"
+  }'
+```
+
+### Event Memory
+
+System events and webhooks:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Deployment completed: v2.5.0 to production",
+    "tags": ["deployment", "production"],
+    "source": "CI/CD",
+    "is_chat": false
+  }'
+```
+
+### Context Memory
+
+Agent working memory and observations:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Observed pattern: API response times spike during European morning hours",
+    "tags": ["observation", "performance"],
+    "source": "Monitoring Agent"
+  }'
+```
+
+## Create Memory Entry
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Task #1234 blocked by missing API credentials",
+    "tags": ["blocker", "task:1234"],
+    "source": "Backend Engineer",
+    "is_chat": false
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "<memory-id>",
+  "board_id": "<board-id>",
+  "content": "Task #1234 blocked by missing API credentials",
+  "tags": ["blocker", "task:1234"],
+  "source": "Backend Engineer",
+  "is_chat": false,
+  "created_at": "2026-03-05T12:00:00"
+}
+```
+
+**Source:** `backend/app/api/board_memory.py:274-306`
+
+## Chat Messages
+
+Chat entries automatically notify mentioned agents:
+
+### Send Chat Message
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "@devops @backend The API is returning 500 errors, need urgent help",
+    "tags": ["chat"]
+  }'
+```
+
+### Mention Parsing
+
+Mentions are extracted with `@` syntax:
+
+```python
+def extract_mentions(text: str) -> set[str]:
+    # Extracts @username, @agent-name, @123 (IDs)
+    return {"devops", "backend"}
+
+def matches_agent_mention(agent: Agent, mentions: set[str]) -> bool:
+    # Checks if agent name or ID matches any mention
+```
+
+**Source:** `backend/app/services/mentions.py`
+
+### Agent Notification
+
+Mentioned agents receive messages:
+
+```
+BOARD CHAT MENTION
+Board: Infrastructure
+From: User
+
+@devops @backend The API is returning 500 errors, need urgent help
+
+Reply via board chat:
+POST http://72.62.201.147:8000/api/v1/agent/boards/<board-id>/memory
+Body: {"content":"...","tags":["chat"]}
+```
+
+**Board lead always receives chat:**
+The board lead agent gets all chat messages, even without mentions.
+
+**Source:** `backend/app/api/board_memory.py:126-216`
+
+## List Memory Entries
+
+```bash
+GET /api/v1/boards/<board-id>/memory?is_chat=false&limit=50&offset=0
+```
+
+**Query parameters:**
+- `is_chat` - Filter chat entries: `true`, `false`, or `null` (all)
+- `limit` - Page size (default 50)
+- `offset` - Page offset
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "<memory-id>",
+      "board_id": "<board-id>",
+      "content": "Deployment completed successfully",
+      "tags": ["deployment", "production"],
+      "source": "CI/CD",
+      "is_chat": false,
+      "created_at": "2026-03-05T12:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/board_memory.py:219-237`
+
+## Stream Memory Updates
+
+Watch for new memory entries in real-time:
+
+```bash
+GET /api/v1/boards/<board-id>/memory/stream?since=2026-03-05T12:00:00Z&is_chat=true
+```
+
+**Server-Sent Events:**
+```
+event: memory
+data: {
+  "memory": {
+    "id": "<memory-id>",
+    "content": "@lead need approval for deployment",
+    "tags": ["chat"],
+    "created_at": "2026-03-05T12:05:00"
+  }
+}
+```
+
+**Poll interval:** 2 seconds
+
+**Source:** `backend/app/api/board_memory.py:240-271`
+
+## Memory Tags
+
+### Standard Tags
+
+- `chat` - Chat message (triggers notifications)
+- `webhook` - Webhook event
+- `webhook:<webhook-id>` - Specific webhook
+- `payload:<payload-id>` - Webhook payload reference
+- `task:<task-id>` - Task-related context
+- `deployment` - Deployment events
+- `alert` - Monitoring alerts
+- `observation` - Agent observations
+- `blocker` - Blocking issues
+
+### Custom Tags
+
+Add any tags for filtering:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Database migration completed in 45 seconds",
+    "tags": ["migration", "database", "performance", "success"]
+  }'
+```
+
+## Control Commands
+
+Special commands reach all board agents:
+
+### Pause All Agents
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "/pause",
+    "tags": ["chat"]
+  }'
+```
+
+All agents on the board receive the `/pause` command and suspend operations.
+
+### Resume All Agents
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/memory \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "/resume",
+    "tags": ["chat"]
+  }'
+```
+
+**Control commands:**
+- `/pause` - Pause all agents
+- `/resume` - Resume all agents
+
+**Source:** `backend/app/api/board_memory.py:168-180`
+
+## Agent Memory Access
+
+Agents read memory for context:
+
+```bash
+curl http://localhost:8000/api/v1/agent/boards/<board-id>/memory?is_chat=false \
+  -H "X-Agent-Token: $AGENT_TOKEN"
+```
+
+**Common queries:**
+
+**Recent chat:**
+```bash
+GET /api/v1/agent/boards/<board-id>/memory?is_chat=true&limit=20
+```
+
+**Webhook events:**
+```bash
+GET /api/v1/agent/boards/<board-id>/memory?tags=webhook&limit=50
+```
+
+**Task context:**
+```bash
+GET /api/v1/agent/boards/<board-id>/memory?tags=task:<task-id>
+```
+
+## Memory Lifecycle
+
+### Creation
+
+```python
+memory = BoardMemory(
+    board_id=board.id,
+    content=payload.content,
+    tags=payload.tags,
+    is_chat=is_chat,
+    source=source,
+)
+session.add(memory)
+await session.commit()
+```
+
+### Automatic Source Assignment
+
+If `source` not provided for chat:
+
+```python
+if is_chat and not source:
+    if actor.actor_type == "agent" and actor.agent:
+        source = actor.agent.name
+    elif actor.user:
+        source = actor.user.preferred_name or actor.user.name or "User"
+```
+
+**Source:** `backend/app/api/board_memory.py:282-288`
+
+### Notification Trigger
+
+Chat entries trigger notifications:
+
+```python
+if is_chat:
+    await _notify_chat_targets(
+        session=session,
+        board=board,
+        memory=memory,
+        actor=actor,
+    )
+```
+
+## Message Snippets
+
+Long messages are truncated in notifications:
+
+```python
+MAX_SNIPPET_LENGTH = 800
+
+snippet = memory.content.strip()
+if len(snippet) > MAX_SNIPPET_LENGTH:
+    snippet = f"{snippet[: MAX_SNIPPET_LENGTH - 3]}..."
+```
+
+**Full content always stored:**
+Complete content is in database, snippets only used in notifications.
+
+**Source:** `backend/app/api/board_memory.py:191-193`
+
+## Memory Query Patterns
+
+### Last N Chat Messages
+
+```sql
+SELECT * FROM board_memory
+WHERE board_id = '<board-id>'
+  AND is_chat = true
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+### Webhook Events
+
+```sql
+SELECT * FROM board_memory
+WHERE board_id = '<board-id>'
+  AND 'webhook' = ANY(tags)
+ORDER BY created_at DESC;
+```
+
+### Task Context
+
+```sql
+SELECT * FROM board_memory
+WHERE board_id = '<board-id>'
+  AND 'task:<task-id>' = ANY(tags)
+ORDER BY created_at ASC;
+```
+
+### Time-Range Query
+
+```sql
+SELECT * FROM board_memory
+WHERE board_id = '<board-id>'
+  AND created_at >= '2026-03-05T00:00:00'
+  AND created_at < '2026-03-06T00:00:00'
+ORDER BY created_at ASC;
+```
+
+## Agent Memory Patterns
+
+### Context Accumulation
+
+Agents build context from recent memory:
+
+```python
+# Read last 50 non-chat entries
+memory_entries = await fetch_memory(
+    board_id=board.id,
+    is_chat=False,
+    limit=50
+)
+
+# Extract task blockers
+blockers = [
+    entry for entry in memory_entries
+    if "blocker" in entry.tags
+]
+
+# Check for recurring issues
+patterns = detect_patterns(memory_entries)
+```
+
+### Working Memory
+
+Agents maintain working state:
+
+```python
+# Store current progress
+await create_memory(
+    content=f"Working on task #{task.id}: analyzed 5/10 files",
+    tags=["progress", f"task:{task.id}"],
+    source=agent.name
+)
+
+# Later, resume from memory
+progress_entries = await fetch_memory(
+    board_id=board.id,
+    tags=["progress", f"task:{task.id}"]
+)
+last_progress = progress_entries[0] if progress_entries else None
+```
+
+### Observation Logging
+
+Agents record insights:
+
+```python
+await create_memory(
+    content=(
+        "Observation: Database queries spike when cache expires.\n"
+        "Recommendation: Implement cache warming strategy."
+    ),
+    tags=["observation", "performance", "database"],
+    source=agent.name
+)
+```
+
+## Memory Retention
+
+Memory entries are kept indefinitely by default. Organizations can implement retention policies:
+
+### Manual Cleanup
+
+```sql
+DELETE FROM board_memory
+WHERE board_id = '<board-id>'
+  AND created_at < NOW() - INTERVAL '90 days'
+  AND is_chat = true;
+```
+
+### Archived Boards
+
+When deleting boards, memory is cascade-deleted:
+
+```python
+await crud.delete_where(
+    session,
+    BoardMemory,
+    col(BoardMemory.board_id) == board.id,
+)
+```
+
+**Source:** `backend/app/services/board_lifecycle.py`
+
+## Database Schema
+
+```sql
+CREATE TABLE board_memory (
+    id UUID PRIMARY KEY,
+    board_id UUID REFERENCES boards(id),
+    content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+    tags TEXT[],
+    source TEXT,
+    is_chat BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_board_memory_board_id ON board_memory(board_id);
+CREATE INDEX idx_board_memory_created_at ON board_memory(created_at);
+CREATE INDEX idx_board_memory_is_chat ON board_memory(is_chat);
+CREATE INDEX idx_board_memory_tags ON board_memory USING GIN(tags);
+```
+
+**Source:** `backend/app/models/board_memory.py`
+
+## Best Practices
+
+### For Agents
+
+1. **Read before write:**
+   - Check recent memory for context
+   - Avoid duplicate observations
+
+2. **Use descriptive tags:**
+   - Tag by category: `blocker`, `observation`, `alert`
+   - Tag by entity: `task:<id>`, `deployment:<env>`
+
+3. **Keep content concise:**
+   - Focus on key information
+   - Link to external details when needed
+
+4. **Set correct is_chat:**
+   - `true` for conversations
+   - `false` for system events
+
+### For Organizations
+
+1. **Monitor memory growth:**
+   - Track entries per board
+   - Implement retention if needed
+
+2. **Review chat patterns:**
+   - Identify frequently mentioned agents
+   - Optimize agent assignments
+
+3. **Audit system events:**
+   - Review webhook memory entries
+   - Validate agent observations
+
+4. **Export important context:**
+   - Back up critical memory entries
+   - Archive before board deletion
+
+## See Also
+
+- [Webhooks](/guides/webhooks)
+- [Managing Boards](/guides/managing-boards)
+- [Agent Provisioning](/guides/agent-provisioning)

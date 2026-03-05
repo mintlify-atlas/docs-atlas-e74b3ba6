@@ -1,0 +1,288 @@
+---
+title: Activity Logs
+description: Activity log structure and querying for audit trails and event feeds
+---
+
+## Overview
+
+Mission Control maintains a comprehensive audit trail via the `activity_events` table. All activity logging is handled by `backend/app/services/activity_log.py` and exposed via `backend/app/api/activity.py`.
+
+## Activity Event Structure
+
+Each activity event is stored in the `activity_events` table with the following key fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Unique event identifier |
+| `event_type` | String | Type of event (e.g., `task.comment`, `agent.provisioned`) |
+| `action` | String | Action performed (e.g., `created`, `updated`, `deleted`) |
+| `message` | Text | Human-readable event message |
+| `board_id` | UUID | Associated board (nullable) |
+| `task_id` | UUID | Associated task (nullable) |
+| `agent_id` | UUID | Agent that performed the action (nullable) |
+| `user_id` | UUID | User that performed the action (nullable) |
+| `actor_id` | UUID | Generic actor reference |
+| `created_at` | Timestamp | Event timestamp |
+
+**Source:** `backend/app/models/activity_events.py`
+
+## Event Types
+
+Common event types include:
+
+- `task.comment` — Agent or user commented on a task
+- `task.created` — New task created
+- `task.status_changed` — Task moved between statuses
+- `agent.provisioned` — Agent successfully provisioned
+- `approval.requested` — Approval requested
+- `approval.reviewed` — Approval approved or rejected
+- Events ending in `failed` — Error events (e.g., `task.execution.failed`)
+
+## Querying Activity Logs
+
+### List All Activity Events
+
+**Endpoint:** `GET /api/v1/activity`
+
+**Implementation:** `backend/app/api/activity.py:165-187`
+
+```bash
+TOKEN="your-auth-token"
+curl "http://localhost:8000/api/v1/activity?limit=50&offset=0" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Access Control:**
+- **Agents:** See only their own activity events
+- **Users:** See activity events for all boards they have access to (based on organization membership)
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | Integer | 50 | Number of records per page |
+| `offset` | Integer | 0 | Offset for pagination |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "event_type": "task.comment",
+      "action": "created",
+      "message": "Started working on implementation",
+      "board_id": "board-uuid",
+      "task_id": "task-uuid",
+      "agent_id": "agent-uuid",
+      "created_at": "2026-03-05T12:34:56"
+    }
+  ],
+  "total": 150,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### Task Comment Feed
+
+**Endpoint:** `GET /api/v1/activity/task-comments`
+
+**Implementation:** `backend/app/api/activity.py:190-223`
+
+Returns a filtered feed of task comments with joined data from tasks, boards, and agents.
+
+```bash
+curl "http://localhost:8000/api/v1/activity/task-comments?limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Filter by Board:**
+```bash
+BOARD_ID="board-uuid"
+curl "http://localhost:8000/api/v1/activity/task-comments?board_id=$BOARD_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response Structure:**
+```json
+{
+  "items": [
+    {
+      "id": "event-uuid",
+      "created_at": "2026-03-05T12:34:56",
+      "message": "Comment text",
+      "agent_id": "agent-uuid",
+      "agent_name": "Agent Name",
+      "agent_role": "Software Engineer",
+      "task_id": "task-uuid",
+      "task_title": "Implement feature X",
+      "board_id": "board-uuid",
+      "board_name": "Engineering Board"
+    }
+  ]
+}
+```
+
+**Query Details:**
+- Joins `activity_events` with `tasks`, `boards`, and `agents`
+- Filters to `event_type = 'task.comment'`
+- Excludes empty messages (trimmed length > 0)
+- Orders by `created_at DESC`
+- Respects board access permissions
+
+**Source:** `backend/app/api/activity.py:144-162`
+
+### Real-Time Task Comment Stream
+
+**Endpoint:** `GET /api/v1/activity/task-comments/stream`
+
+**Implementation:** `backend/app/api/activity.py:226-285`
+
+Server-Sent Events (SSE) stream for real-time task comment updates.
+
+```bash
+SINCE="2026-03-05T00:00:00Z"
+curl "http://localhost:8000/api/v1/activity/task-comments/stream?since=$SINCE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `since` | ISO 8601 | Current time | Only return events after this timestamp |
+| `board_id` | UUID | `null` | Filter to a specific board |
+
+**Event Format:**
+```
+event: comment
+data: {"comment": {...}}
+```
+
+**Behavior:**
+- Polls the database every 2 seconds (`STREAM_POLL_SECONDS = 2`)
+- Maintains a deduplication buffer of 2000 events (`SSE_SEEN_MAX = 2000`)
+- Sends ping every 15 seconds to keep connection alive
+- Automatically filters by accessible boards
+
+## Error Event Tracking
+
+Error events are identified by `event_type` matching the pattern `%failed`.
+
+### Query Error Events
+
+```sql
+SELECT event_type, message, created_at, agent_id, task_id
+FROM activity_events
+WHERE event_type LIKE '%failed'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**Error Rate Calculation:**
+
+The metrics endpoint calculates error rate as:
+
+```python
+error_count = COUNT(event_type LIKE '%failed')
+total_count = COUNT(*)
+error_rate_pct = (error_count / total_count) * 100
+```
+
+**Source:** `backend/app/api/metrics.py:211-245`
+
+## Activity Logging Service
+
+The `activity_log.py` service provides helper functions for logging events:
+
+**Location:** `backend/app/services/activity_log.py`
+
+**Common Usage Pattern:**
+```python
+from app.services.activity_log import log_activity
+
+activity_event = ActivityEvent(
+    event_type="task.comment",
+    action="created",
+    message="Agent started working on task",
+    board_id=board.id,
+    task_id=task.id,
+    agent_id=agent.id,
+)
+session.add(activity_event)
+await session.commit()
+```
+
+Events are automatically timestamped with `created_at = utcnow()`.
+
+## Access Control
+
+Activity log endpoints enforce access control based on:
+
+1. **Agent Access** (`X-Agent-Token` header):
+   - Agents can only view their own activity events
+   - Filtered by `agent_id = current_agent.id`
+
+2. **User Access** (`Authorization: Bearer` header):
+   - Users can view activity for all boards in their organization
+   - Filtered by `board_id IN (accessible_board_ids)`
+   - Accessible boards determined by organization membership
+
+**Source:** `backend/app/api/activity.py:166-186`
+
+## Query Examples
+
+### All Comments on a Specific Task
+
+```sql
+SELECT a.created_at, a.message, ag.name as agent_name
+FROM activity_events a
+LEFT JOIN agents ag ON a.agent_id = ag.id
+WHERE a.event_type = 'task.comment'
+  AND a.task_id = 'task-uuid-here'
+ORDER BY a.created_at ASC;
+```
+
+### Agent Activity Summary
+
+```sql
+SELECT 
+  event_type,
+  COUNT(*) as count
+FROM activity_events
+WHERE agent_id = 'agent-uuid-here'
+  AND created_at >= NOW() - INTERVAL '7 days'
+GROUP BY event_type
+ORDER BY count DESC;
+```
+
+### Recent Board Activity
+
+```sql
+SELECT 
+  a.created_at,
+  a.event_type,
+  a.message,
+  ag.name as agent_name,
+  t.title as task_title
+FROM activity_events a
+LEFT JOIN agents ag ON a.agent_id = ag.id
+LEFT JOIN tasks t ON a.task_id = t.id
+WHERE a.board_id = 'board-uuid-here'
+ORDER BY a.created_at DESC
+LIMIT 50;
+```
+
+## Performance Considerations
+
+1. **Indexes**: The `activity_events` table has indexes on:
+   - `created_at` (for time-range queries)
+   - `board_id` (for board-filtered queries)
+   - `agent_id` (for agent-filtered queries)
+   - `task_id` (for task-specific queries)
+   - `event_type` (for type filtering)
+
+2. **Pagination**: Always use `limit` and `offset` for large result sets
+
+3. **SSE Streams**: The streaming endpoint polls every 2 seconds. For high-frequency updates, consider adjusting `STREAM_POLL_SECONDS`.
+
+4. **Trimming**: Empty messages are excluded from task comment queries to reduce noise

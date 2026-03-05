@@ -1,0 +1,376 @@
+---
+title: Docker Deployment
+description: Deploy OpenClaw Mission Control using Docker Compose
+---
+
+This guide covers deploying Mission Control using Docker Compose, which is the recommended method for production deployments and local development.
+
+## Prerequisites
+
+- Docker Engine (20.10 or later)
+- Docker Compose v2 (`docker compose` command)
+- At least 2GB of available RAM
+- Ports 3000, 8000, 5432, and 6379 available on the host
+
+## Architecture Overview
+
+The Docker Compose setup includes five services:
+
+- **db**: PostgreSQL 16 database (persistent storage)
+- **redis**: Redis 7 cache and queue backend
+- **backend**: FastAPI application server (port 8000)
+- **frontend**: Next.js web interface (port 3000)
+- **webhook-worker**: RQ background worker for async tasks
+
+## Quick Start
+
+### 1. Clone and Configure
+
+```bash
+git clone https://github.com/abhi1693/openclaw-mission-control.git
+cd openclaw-mission-control
+cp .env.example .env
+```
+
+### 2. Set Required Environment Variables
+
+Edit `.env` and configure:
+
+```bash
+# REQUIRED: Set a strong authentication token (min 50 characters)
+LOCAL_AUTH_TOKEN=your-secure-random-token-here-at-least-50-characters-long
+
+# REQUIRED: Public API URL reachable from browser
+NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Optional: Customize ports if defaults conflict
+FRONTEND_PORT=3000
+BACKEND_PORT=8000
+POSTGRES_PORT=5432
+REDIS_PORT=6379
+```
+
+<Warning>
+  The `LOCAL_AUTH_TOKEN` must be at least 50 characters and cannot be a placeholder like "change-me" or "replace-with-strong-random-token".
+</Warning>
+
+### 3. Start All Services
+
+```bash
+docker compose -f compose.yml --env-file .env up -d --build
+```
+
+This command will:
+- Build the backend and frontend Docker images
+- Start PostgreSQL and Redis containers
+- Initialize the database (if `DB_AUTO_MIGRATE=true`)
+- Start the API server, frontend, and background worker
+
+### 4. Verify Deployment
+
+Check that all services are running:
+
+```bash
+docker compose ps
+```
+
+All services should show status `Up`. Access the application:
+
+- **Frontend UI**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/healthz
+
+## Docker Compose Configuration
+
+The `compose.yml` file defines the complete stack:
+
+### Database Service (PostgreSQL)
+
+```yaml
+db:
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_DB: ${POSTGRES_DB:-mission_control}
+    POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  volumes:
+    - postgres_data:/var/lib/postgresql/data
+  ports:
+    - "${POSTGRES_PORT:-5432}:5432"
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+```
+
+**Key features**:
+- Uses PostgreSQL 16 Alpine for minimal image size
+- Persistent volume for data (`postgres_data`)
+- Health check ensures database is ready before dependent services start
+- Configurable credentials via environment variables
+
+### Redis Service
+
+```yaml
+redis:
+  image: redis:7-alpine
+  ports:
+    - "${REDIS_PORT:-6379}:6379"
+```
+
+**Purpose**: 
+- Queue backend for RQ (Redis Queue) job processing
+- Used by webhook-worker for async task execution
+
+### Backend Service (FastAPI)
+
+```yaml
+backend:
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  env_file:
+    - ./backend/.env.example
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-mission_control}
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    DB_AUTO_MIGRATE: false
+    AUTH_MODE: ${AUTH_MODE}
+    LOCAL_AUTH_TOKEN: ${LOCAL_AUTH_TOKEN}
+    RQ_REDIS_URL: redis://redis:6379/0
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_started
+  ports:
+    - "${BACKEND_PORT:-8000}:8000"
+```
+
+**Build context**: Root directory (`.`) to include `backend/templates/` in the image
+
+**Container networking**: Uses service names (`db`, `redis`) for internal communication
+
+**Database migrations**: Set `DB_AUTO_MIGRATE=false` by default. Run migrations manually with:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+### Frontend Service (Next.js)
+
+```yaml
+frontend:
+  build:
+    context: ./frontend
+    args:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_AUTH_MODE: ${AUTH_MODE}
+  env_file:
+    - path: ./frontend/.env
+      required: false
+  environment:
+    NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    NEXT_PUBLIC_AUTH_MODE: ${AUTH_MODE}
+  depends_on:
+    - backend
+  ports:
+    - "${FRONTEND_PORT:-3000}:3000"
+```
+
+<Warning>
+  The frontend does NOT load `frontend/.env.example` to avoid accidentally enabling Clerk auth with placeholder keys. Only `frontend/.env` is loaded if present.
+</Warning>
+
+### Webhook Worker Service
+
+```yaml
+webhook-worker:
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  command: ["rq", "worker", "-u", "redis://redis:6379/0"]
+  env_file:
+    - ./backend/.env.example
+  depends_on:
+    redis:
+      condition: service_started
+    db:
+      condition: service_healthy
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-mission_control}
+    AUTH_MODE: ${AUTH_MODE}
+    LOCAL_AUTH_TOKEN: ${LOCAL_AUTH_TOKEN}
+    RQ_REDIS_URL: redis://redis:6379/0
+    RQ_QUEUE_NAME: ${RQ_QUEUE_NAME:-default}
+    RQ_DISPATCH_THROTTLE_SECONDS: ${RQ_DISPATCH_THROTTLE_SECONDS:-2.0}
+    RQ_DISPATCH_MAX_RETRIES: ${RQ_DISPATCH_MAX_RETRIES:-3}
+  restart: unless-stopped
+```
+
+**Purpose**: Processes background jobs (webhook dispatch, template sync, etc.)
+
+**Restart policy**: `unless-stopped` ensures the worker restarts automatically
+
+## Service Management
+
+### View Logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f webhook-worker
+
+# Last 50 lines
+docker compose logs --tail=50 backend
+```
+
+### Restart Services
+
+```bash
+# Restart all services
+docker compose restart
+
+# Restart specific service
+docker compose restart backend
+
+# Rebuild and restart after code changes
+docker compose up -d --build backend
+```
+
+### Stop and Remove
+
+```bash
+# Stop all services
+docker compose stop
+
+# Stop and remove containers (preserves volumes)
+docker compose down
+
+# Remove containers AND volumes (destroys database)
+docker compose down -v
+```
+
+### Execute Commands in Containers
+
+```bash
+# Run Alembic migrations
+docker compose exec backend alembic upgrade head
+
+# Open PostgreSQL shell
+docker compose exec db psql -U postgres -d mission_control
+
+# Run backend shell
+docker compose exec backend bash
+
+# Run Django-style management commands
+docker compose exec backend python -m app.cli
+```
+
+## Production Considerations
+
+### Security
+
+1. **Change default passwords**: Never use `postgres`/`postgres` in production
+2. **Strong auth token**: Generate a cryptographically secure `LOCAL_AUTH_TOKEN`
+3. **Network isolation**: Use Docker networks to isolate services
+4. **TLS/SSL**: Place a reverse proxy (nginx, Caddy) in front with HTTPS
+
+### Performance
+
+1. **Resource limits**: Add resource constraints to prevent OOM:
+
+```yaml
+backend:
+  deploy:
+    resources:
+      limits:
+        memory: 1G
+        cpus: '1.0'
+      reservations:
+        memory: 512M
+```
+
+2. **Connection pooling**: Adjust PostgreSQL `max_connections` if needed
+3. **Redis persistence**: Enable RDB or AOF for queue persistence
+
+### Monitoring
+
+1. **Health checks**: Implement health check endpoints for all services
+2. **Log aggregation**: Use Docker logging drivers (syslog, fluentd, etc.)
+3. **Metrics**: Export Prometheus metrics from backend service
+
+### Backup
+
+Backup the PostgreSQL volume regularly:
+
+```bash
+# Export database dump
+docker compose exec db pg_dump -U postgres mission_control > backup.sql
+
+# Restore from dump
+docker compose exec -T db psql -U postgres mission_control < backup.sql
+```
+
+## Troubleshooting
+
+### Port Conflicts
+
+If default ports are in use, customize in `.env`:
+
+```bash
+FRONTEND_PORT=3001
+BACKEND_PORT=8001
+POSTGRES_PORT=5433
+REDIS_PORT=6380
+```
+
+### Database Connection Errors
+
+Ensure the database is healthy:
+
+```bash
+docker compose ps db
+docker compose logs db
+```
+
+Manually test connection:
+
+```bash
+docker compose exec backend python -c "from app.core.database import engine; print(engine.url)"
+```
+
+### Frontend Can't Reach Backend
+
+Verify `NEXT_PUBLIC_API_URL` is set correctly in `.env`. This URL must be reachable from the **browser** (host machine), not from within the Docker network.
+
+**Incorrect** (uses Docker service name):
+```bash
+NEXT_PUBLIC_API_URL=http://backend:8000  # ❌ Won't work in browser
+```
+
+**Correct** (uses host address):
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000  # ✅ Works in browser
+```
+
+### Worker Not Processing Jobs
+
+Check worker logs and Redis connectivity:
+
+```bash
+docker compose logs webhook-worker
+docker compose exec webhook-worker python -c "import redis; r=redis.from_url('redis://redis:6379/0'); print(r.ping())"
+```
+
+## Next Steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Run database migrations](/deployment/database-migrations)
+- [Set up systemd services](/deployment/systemd) for non-Docker deployments

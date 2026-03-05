@@ -1,0 +1,392 @@
+---
+title: "Gateway Sessions"
+description: "Query and interact with active gateway sessions"
+---
+
+Gateway sessions represent active agent contexts running on an OpenClaw gateway. These endpoints allow you to inspect session state, view chat history, and send messages.
+
+## Authentication
+
+All endpoints require organization admin authentication via `Authorization: Bearer <token>` header.
+
+## List Gateway Sessions
+
+**GET /api/v1/gateways/sessions**
+
+List all active sessions for gateways associated with a board.
+
+### Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Filter sessions by board ID
+</ParamField>
+
+### Response
+
+<ResponseField name="sessions" type="object[]">
+  Array of session objects from the gateway runtime
+</ResponseField>
+
+<ResponseField name="main_session" type="object" optional>
+  The gateway's main agent session (if present)
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/gateways/sessions?board_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+### Example Response
+
+```json
+{
+  "sessions": [
+    {
+      "id": "agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main",
+      "agentId": "mc-c91361ef-6d85-439c-82e1-8f388a302e6a",
+      "status": "active",
+      "created": "2026-03-05T10:00:00Z",
+      "lastActivity": "2026-03-05T11:30:00Z"
+    }
+  ],
+  "main_session": {
+    "id": "agent:main:main",
+    "agentId": "main",
+    "status": "active"
+  }
+}
+```
+
+## Get Gateway Session
+
+**GET /api/v1/gateways/sessions/{session_id}**
+
+Fetch details of a specific gateway session.
+
+### Path Parameters
+
+<ParamField path="session_id" type="string" required>
+  Session identifier (e.g., `agent:mc-{uuid}:main`)
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Board context for session lookup
+</ParamField>
+
+### Response
+
+<ResponseField name="session" type="object">
+  Session details from the gateway runtime
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/gateways/sessions/agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Get Session History
+
+**GET /api/v1/gateways/sessions/{session_id}/history**
+
+Fetch the conversation history for a gateway session.
+
+### Path Parameters
+
+<ParamField path="session_id" type="string" required>
+  Session identifier
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Board context for session lookup
+</ParamField>
+
+### Response
+
+<ResponseField name="history" type="object[]">
+  Array of conversation messages from the session
+  
+  Each message typically includes:
+  - `role` - "user", "assistant", or "system"
+  - `content` - Message text
+  - `timestamp` - When the message was created
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/gateways/sessions/agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main/history" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+### Example Response
+
+```json
+{
+  "history": [
+    {
+      "role": "system",
+      "content": "You are a CFO agent...",
+      "timestamp": "2026-03-05T10:00:00Z"
+    },
+    {
+      "role": "user",
+      "content": "Please review the Q1 budget",
+      "timestamp": "2026-03-05T10:15:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I'll review the Q1 budget now. Let me fetch the latest numbers...",
+      "timestamp": "2026-03-05T10:15:30Z"
+    }
+  ]
+}
+```
+
+## Send Session Message
+
+**POST /api/v1/gateways/sessions/{session_id}/message**
+
+Send a message into a specific gateway session.
+
+### Path Parameters
+
+<ParamField path="session_id" type="string" required>
+  Session identifier
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Board context for session lookup
+</ParamField>
+
+### Request Body
+
+<ParamField body="content" type="string" required>
+  Message text to send to the agent
+</ParamField>
+
+### Response
+
+Returns a success indicator:
+
+```json
+{
+  "ok": true
+}
+```
+
+### Example Request
+
+```bash
+curl -X POST "https://api.example.com/api/v1/gateways/sessions/agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main/message" \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Please prioritize the budget review task"
+  }'
+```
+
+## Gateway Status
+
+**GET /api/v1/gateways/status**
+
+Check gateway connectivity and session health.
+
+### Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Board ID to resolve gateway
+</ParamField>
+
+<ParamField query="gateway_url" type="string" optional>
+  Direct gateway URL to check
+</ParamField>
+
+<ParamField query="gateway_token" type="string" optional>
+  Gateway authentication token
+</ParamField>
+
+<ParamField query="gateway_disable_device_pairing" type="boolean" default="false" optional>
+  Device pairing mode
+</ParamField>
+
+<ParamField query="gateway_allow_insecure_tls" type="boolean" default="false" optional>
+  TLS validation mode
+</ParamField>
+
+### Response
+
+<ResponseField name="connected" type="boolean">
+  Whether the gateway is reachable
+</ResponseField>
+
+<ResponseField name="gateway_url" type="string">
+  Gateway WebSocket URL
+</ResponseField>
+
+<ResponseField name="sessions_count" type="integer" optional>
+  Number of active sessions
+</ResponseField>
+
+<ResponseField name="sessions" type="object[]" optional>
+  Array of active session objects
+</ResponseField>
+
+<ResponseField name="main_session" type="object" optional>
+  Gateway main session details
+</ResponseField>
+
+<ResponseField name="main_session_error" type="string" optional>
+  Error message if main session lookup failed
+</ResponseField>
+
+<ResponseField name="error" type="string" optional>
+  Connection error message if gateway is unreachable
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/gateways/status?board_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+### Example Response (Success)
+
+```json
+{
+  "connected": true,
+  "gateway_url": "ws://72.62.201.147:18789",
+  "sessions_count": 5,
+  "sessions": [
+    {
+      "id": "agent:mc-c91361ef:main",
+      "status": "active"
+    }
+  ],
+  "main_session": {
+    "id": "agent:main:main",
+    "status": "active"
+  }
+}
+```
+
+### Example Response (Error)
+
+```json
+{
+  "connected": false,
+  "gateway_url": "ws://72.62.201.147:18789",
+  "sessions_count": null,
+  "sessions": null,
+  "main_session": null,
+  "error": "Connection refused"
+}
+```
+
+## Gateway Commands
+
+**GET /api/v1/gateways/commands**
+
+Returns the supported gateway protocol methods and events.
+
+### Response
+
+<ResponseField name="protocol_version" type="integer">
+  Gateway RPC protocol version
+</ResponseField>
+
+<ResponseField name="methods" type="string[]">
+  Array of supported RPC method names
+</ResponseField>
+
+<ResponseField name="events" type="string[]">
+  Array of supported event types
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "protocol_version": 1,
+  "methods": [
+    "agents.create",
+    "agents.update",
+    "agents.delete",
+    "agents.list",
+    "agents.files.get",
+    "agents.files.set",
+    "sessions.list",
+    "sessions.history",
+    "sessions.send"
+  ],
+  "events": [
+    "agent.created",
+    "agent.updated",
+    "session.started",
+    "session.ended"
+  ]
+}
+```
+
+## Use Cases
+
+### Monitoring Active Agents
+
+List all sessions to see which agents are currently active:
+
+```bash
+curl "$BASE_URL/api/v1/gateways/sessions" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Debugging Agent Behavior
+
+Review session history to understand agent decisions:
+
+```bash
+curl "$BASE_URL/api/v1/gateways/sessions/$SESSION_ID/history" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Direct Agent Communication
+
+Send urgent messages directly to agent sessions:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/sessions/$SESSION_ID/message" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "URGENT: Production incident detected"}'
+```
+
+### Health Checks
+
+Verify gateway connectivity before operations:
+
+```bash
+curl "$BASE_URL/api/v1/gateways/status?board_id=$BOARD_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Session ID Format
+
+Gateway sessions follow this naming convention:
+
+- **Agent sessions**: `agent:{agent-key}:main`
+- **Main agent**: `agent:main:main`
+- **MC agents**: `agent:mc-{uuid}:main`
+
+Examples:
+- `agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main`
+- `agent:main:main`
+- `agent:cfo:main` (manually configured agent)

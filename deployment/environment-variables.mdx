@@ -1,0 +1,474 @@
+---
+title: Environment Variables
+description: Complete reference for all Mission Control environment variables
+---
+
+This page documents all environment variables used by OpenClaw Mission Control, sourced from the `Settings` class in `backend/app/core/config.py`.
+
+## Configuration Files
+
+Environment variables are loaded from:
+
+- **Root `.env`**: Docker Compose overrides (ports, database credentials)
+- **`backend/.env`**: Backend application settings
+- **`frontend/.env.local`**: Frontend browser-accessible variables
+
+The backend uses `pydantic_settings` to load from `backend/.env` automatically, regardless of working directory.
+
+## Backend Environment Variables
+
+### Application Settings
+
+#### `ENVIRONMENT`
+
+- **Type**: `string`
+- **Default**: `"dev"`
+- **Description**: Application environment identifier. Affects default behavior:
+  - In `dev` mode, `DB_AUTO_MIGRATE` defaults to `true` unless explicitly set
+  - Used for conditional logging and feature flags
+- **Example**: `ENVIRONMENT=production`
+
+---
+
+#### `LOG_LEVEL`
+
+- **Type**: `string`
+- **Default**: `"INFO"`
+- **Description**: Python logging level for application logs
+- **Valid values**: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+- **Example**: `LOG_LEVEL=DEBUG`
+
+---
+
+#### `LOG_FORMAT`
+
+- **Type**: `string`
+- **Default**: `"text"`
+- **Description**: Log output format
+- **Valid values**: `text` (human-readable), `json` (structured logging)
+- **Example**: `LOG_FORMAT=json`
+
+---
+
+#### `LOG_USE_UTC`
+
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: Use UTC timestamps in logs instead of local timezone
+- **Example**: `LOG_USE_UTC=true`
+
+---
+
+#### `REQUEST_LOG_SLOW_MS`
+
+- **Type**: `integer`
+- **Default**: `1000`
+- **Constraint**: `>= 0`
+- **Description**: Log requests slower than this threshold (milliseconds)
+- **Example**: `REQUEST_LOG_SLOW_MS=500`
+
+---
+
+#### `REQUEST_LOG_INCLUDE_HEALTH`
+
+- **Type**: `boolean`
+- **Default**: `false`
+- **Description**: Include `/healthz` endpoint requests in access logs
+- **Example**: `REQUEST_LOG_INCLUDE_HEALTH=true`
+
+---
+
+### Database Settings
+
+#### `DATABASE_URL`
+
+- **Type**: `string` (SQLAlchemy URL)
+- **Default**: `"postgresql+psycopg://postgres:postgres@localhost:5432/openclaw_agency"`
+- **Description**: PostgreSQL connection URL using psycopg 3 driver
+- **Format**: `postgresql+psycopg://user:password@host:port/database`
+- **Example**: `DATABASE_URL=postgresql+psycopg://mcuser:secure_pass@db.example.com:5432/mission_control`
+
+<Warning>
+  Always use the `postgresql+psycopg` scheme (not `postgresql://`) to ensure compatibility with psycopg 3.
+</Warning>
+
+---
+
+#### `DB_AUTO_MIGRATE`
+
+- **Type**: `boolean`
+- **Default**: `false` (except `true` in `dev` environment)
+- **Description**: Automatically run Alembic migrations on application startup
+- **Recommendation**: Set to `false` in production; run migrations manually
+- **Example**: `DB_AUTO_MIGRATE=true`
+
+---
+
+### Authentication Settings
+
+#### `AUTH_MODE`
+
+- **Type**: `enum`
+- **Required**: Yes
+- **Valid values**: `local`, `clerk`
+- **Description**: Authentication mode for the application
+  - `local`: Shared bearer token authentication (requires `LOCAL_AUTH_TOKEN`)
+  - `clerk`: Clerk JWT authentication (requires `CLERK_SECRET_KEY`)
+- **Example**: `AUTH_MODE=local`
+
+---
+
+#### `LOCAL_AUTH_TOKEN`
+
+- **Type**: `string`
+- **Required**: Yes (when `AUTH_MODE=local`)
+- **Constraint**: Minimum 50 characters, cannot be placeholder value
+- **Description**: Shared bearer token for local authentication mode
+- **Invalid values**: `change-me`, `changeme`, `replace-me`, `replace-with-strong-random-token`
+- **Example**: `LOCAL_AUTH_TOKEN=openclaw-mission-control-secure-token-2026-do-not-share-this-key`
+
+<Warning>
+  The `LOCAL_AUTH_TOKEN` must be at least 50 characters and cannot be a common placeholder. Use a cryptographically secure random string.
+</Warning>
+
+---
+
+#### `CLERK_SECRET_KEY`
+
+- **Type**: `string`
+- **Required**: Yes (when `AUTH_MODE=clerk`)
+- **Description**: Clerk API secret key for JWT verification
+- **Example**: `CLERK_SECRET_KEY=sk_live_xxxxxxxxxxxxx`
+
+---
+
+#### `CLERK_API_URL`
+
+- **Type**: `string`
+- **Default**: `"https://api.clerk.com"`
+- **Description**: Clerk API base URL (rarely needs to change)
+- **Example**: `CLERK_API_URL=https://api.clerk.com`
+
+---
+
+#### `CLERK_VERIFY_IAT`
+
+- **Type**: `boolean`
+- **Default**: `true`
+- **Description**: Verify JWT "issued at" (iat) claim during token validation
+- **Example**: `CLERK_VERIFY_IAT=false`
+
+---
+
+#### `CLERK_LEEWAY`
+
+- **Type**: `float`
+- **Default**: `10.0`
+- **Description**: Clock skew tolerance (seconds) for JWT timestamp validation
+- **Example**: `CLERK_LEEWAY=5.0`
+
+---
+
+### HTTP/CORS Settings
+
+#### `CORS_ORIGINS`
+
+- **Type**: `string` (comma-separated list)
+- **Default**: `""` (empty)
+- **Description**: Allowed CORS origins for frontend requests
+- **Format**: Comma-separated URLs without trailing slashes
+- **Example**: `CORS_ORIGINS=http://localhost:3000,https://mission-control.example.com`
+
+---
+
+#### `BASE_URL`
+
+- **Type**: `string`
+- **Default**: `""` (empty)
+- **Description**: Public base URL of the API server (used in webhooks, emails, etc.)
+- **Example**: `BASE_URL=https://api.mission-control.example.com`
+
+---
+
+### Redis Queue (RQ) Settings
+
+#### `RQ_REDIS_URL`
+
+- **Type**: `string` (Redis URL)
+- **Default**: `"redis://localhost:6379/0"`
+- **Description**: Redis connection URL for RQ background job queue
+- **Format**: `redis://host:port/db`
+- **Example**: `RQ_REDIS_URL=redis://redis.example.com:6379/1`
+
+---
+
+#### `RQ_QUEUE_NAME`
+
+- **Type**: `string`
+- **Default**: `"default"`
+- **Description**: Redis queue name for job dispatch
+- **Example**: `RQ_QUEUE_NAME=webhooks`
+
+---
+
+#### `RQ_DISPATCH_THROTTLE_SECONDS`
+
+- **Type**: `float`
+- **Default**: `15.0`
+- **Description**: Minimum delay (seconds) between webhook dispatch attempts
+- **Example**: `RQ_DISPATCH_THROTTLE_SECONDS=10.0`
+
+---
+
+#### `RQ_DISPATCH_MAX_RETRIES`
+
+- **Type**: `integer`
+- **Default**: `3`
+- **Description**: Maximum number of retry attempts for failed webhook dispatches
+- **Example**: `RQ_DISPATCH_MAX_RETRIES=5`
+
+---
+
+#### `RQ_DISPATCH_RETRY_BASE_SECONDS`
+
+- **Type**: `float`
+- **Default**: `10.0`
+- **Description**: Base delay (seconds) for exponential backoff retry strategy
+- **Example**: `RQ_DISPATCH_RETRY_BASE_SECONDS=5.0`
+
+---
+
+#### `RQ_DISPATCH_RETRY_MAX_SECONDS`
+
+- **Type**: `float`
+- **Default**: `120.0`
+- **Description**: Maximum delay (seconds) cap for exponential backoff
+- **Example**: `RQ_DISPATCH_RETRY_MAX_SECONDS=300.0`
+
+---
+
+### Gateway Settings
+
+#### `GATEWAY_MIN_VERSION`
+
+- **Type**: `string` (semantic version)
+- **Default**: `"2026.02.9"`
+- **Description**: Minimum required OpenClaw gateway version for compatibility
+- **Example**: `GATEWAY_MIN_VERSION=2026.03.1`
+
+---
+
+## Frontend Environment Variables
+
+Frontend variables must be prefixed with `NEXT_PUBLIC_` to be accessible in the browser.
+
+<Info>
+  Frontend environment files:
+  - **`.env.example`**: Template with placeholder values (not loaded by Docker Compose)
+  - **`.env.local`**: User-managed file for local development
+  - **`.env`**: Loaded by Docker Compose (optional)
+</Info>
+
+### `NEXT_PUBLIC_API_URL`
+
+- **Type**: `string` (URL)
+- **Required**: Yes
+- **Description**: Backend API URL accessible from the browser
+- **Important**: Must be reachable from the user's browser, not just the container network
+- **Example**: `NEXT_PUBLIC_API_URL=http://localhost:8000`
+- **Production example**: `NEXT_PUBLIC_API_URL=https://api.mission-control.example.com`
+
+<Warning>
+  This URL must be accessible from the **browser** (client-side), not the server. Use public IP/domain in production.
+</Warning>
+
+---
+
+### `NEXT_PUBLIC_AUTH_MODE`
+
+- **Type**: `enum`
+- **Required**: Yes
+- **Valid values**: `local`, `clerk`
+- **Description**: Authentication mode (must match backend `AUTH_MODE`)
+- **Example**: `NEXT_PUBLIC_AUTH_MODE=local`
+
+---
+
+### `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+
+- **Type**: `string`
+- **Required**: Yes (when `NEXT_PUBLIC_AUTH_MODE=clerk`)
+- **Description**: Clerk publishable key for client-side authentication
+- **Example**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_xxxxxxxxxxxxx`
+
+---
+
+### `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL`
+
+- **Type**: `string` (path)
+- **Default**: `"/boards"`
+- **Description**: Redirect path after successful Clerk sign-in
+- **Example**: `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/dashboard`
+
+---
+
+### `NEXT_PUBLIC_CLERK_AFTER_SIGN_OUT_URL`
+
+- **Type**: `string` (path)
+- **Default**: `"/"`
+- **Description**: Redirect path after Clerk sign-out
+- **Example**: `NEXT_PUBLIC_CLERK_AFTER_SIGN_OUT_URL=/login`
+
+---
+
+## Docker Compose Variables
+
+These are defined in the root `.env` file and control Docker Compose behavior:
+
+### `FRONTEND_PORT`
+
+- **Type**: `integer`
+- **Default**: `3000`
+- **Description**: Host port for frontend service
+- **Example**: `FRONTEND_PORT=3001`
+
+---
+
+### `BACKEND_PORT`
+
+- **Type**: `integer`
+- **Default**: `8000`
+- **Description**: Host port for backend API service
+- **Example**: `BACKEND_PORT=8001`
+
+---
+
+### `POSTGRES_DB`
+
+- **Type**: `string`
+- **Default**: `"mission_control"`
+- **Description**: PostgreSQL database name
+- **Example**: `POSTGRES_DB=openclaw_prod`
+
+---
+
+### `POSTGRES_USER`
+
+- **Type**: `string`
+- **Default**: `"postgres"`
+- **Description**: PostgreSQL username
+- **Example**: `POSTGRES_USER=mcadmin`
+
+---
+
+### `POSTGRES_PASSWORD`
+
+- **Type**: `string`
+- **Default**: `"postgres"`
+- **Description**: PostgreSQL password
+- **Security**: Change in production!
+- **Example**: `POSTGRES_PASSWORD=secure_random_password_here`
+
+---
+
+### `POSTGRES_PORT`
+
+- **Type**: `integer`
+- **Default**: `5432`
+- **Description**: Host port for PostgreSQL service
+- **Example**: `POSTGRES_PORT=5433`
+
+---
+
+### `REDIS_PORT`
+
+- **Type**: `integer`
+- **Default**: `6379`
+- **Description**: Host port for Redis service
+- **Example**: `REDIS_PORT=6380`
+
+---
+
+## Example Configurations
+
+### Development (Local)
+
+**Root `.env`**:
+```bash
+FRONTEND_PORT=3000
+BACKEND_PORT=8000
+POSTGRES_DB=mission_control
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_PORT=5432
+REDIS_PORT=6379
+CORS_ORIGINS=http://localhost:3000
+AUTH_MODE=local
+LOCAL_AUTH_TOKEN=dev-token-minimum-50-characters-abcdefghijklmnopqrstuvwxyz1234567890
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+**`backend/.env`**:
+```bash
+ENVIRONMENT=dev
+LOG_LEVEL=DEBUG
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/mission_control
+DB_AUTO_MIGRATE=true
+AUTH_MODE=local
+LOCAL_AUTH_TOKEN=dev-token-minimum-50-characters-abcdefghijklmnopqrstuvwxyz1234567890
+RQ_REDIS_URL=redis://localhost:6379/0
+```
+
+**`frontend/.env.local`**:
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_AUTH_MODE=local
+```
+
+### Production (Systemd)
+
+**`backend/.env`**:
+```bash
+ENVIRONMENT=production
+LOG_LEVEL=INFO
+LOG_FORMAT=json
+LOG_USE_UTC=true
+DATABASE_URL=postgresql+psycopg://mcuser:STRONG_PASSWORD@localhost:5432/mission_control
+CORS_ORIGINS=https://mission-control.example.com
+BASE_URL=https://api.mission-control.example.com
+AUTH_MODE=local
+LOCAL_AUTH_TOKEN=production-secure-random-token-at-least-50-chars-long-CHANGE-THIS
+DB_AUTO_MIGRATE=false
+RQ_REDIS_URL=redis://localhost:6379/0
+RQ_DISPATCH_THROTTLE_SECONDS=10.0
+GATEWAY_MIN_VERSION=2026.02.9
+```
+
+**`frontend/.env.local`**:
+```bash
+NEXT_PUBLIC_API_URL=https://api.mission-control.example.com
+NEXT_PUBLIC_AUTH_MODE=local
+```
+
+## Validation
+
+The `Settings` class validates configuration on startup:
+
+1. **Auth mode validation**:
+   - If `AUTH_MODE=clerk`, `CLERK_SECRET_KEY` must be non-empty
+   - If `AUTH_MODE=local`, `LOCAL_AUTH_TOKEN` must be ≥50 chars and not a placeholder
+
+2. **Environment defaults**:
+   - In `dev` mode, `DB_AUTO_MIGRATE` defaults to `true` unless explicitly set
+
+3. **Type validation**:
+   - All numeric fields are validated (e.g., `REQUEST_LOG_SLOW_MS >= 0`)
+   - Boolean fields accept `true`/`false`, `1`/`0`, `yes`/`no`
+
+If validation fails, the application will not start and will print an error message.
+
+## Next Steps
+
+- [Deploy with Docker Compose](/deployment/docker)
+- [Deploy with systemd](/deployment/systemd)
+- [Manage database migrations](/deployment/database-migrations)

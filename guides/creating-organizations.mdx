@@ -1,0 +1,333 @@
+---
+title: Creating Organizations
+description: Create and manage organizations in Mission Control
+---
+
+# Creating Organizations
+
+Organizations are the top-level containers for boards, agents, and gateways in Mission Control.
+
+## Create Your First Organization
+
+<Steps>
+  <Step title="Authenticate">
+    Ensure you're authenticated (see [Authentication](/guides/authentication)).
+  </Step>
+  
+  <Step title="Send create request">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/organizations \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "name": "Acme Corp"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Response">
+    ```json
+    {
+      "id": "<org-id>",
+      "name": "Acme Corp",
+      "created_at": "2026-03-05T12:00:00",
+      "updated_at": "2026-03-05T12:00:00"
+    }
+    ```
+    
+    You are automatically assigned as the **owner** with full permissions.
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/organizations.py:119-160`
+
+## Organization Workflow
+
+### 1. Create Organization
+
+The backend:
+1. Validates name uniqueness (case-insensitive)
+2. Creates `Organization` record
+3. Creates `OrganizationMember` with role `owner`
+4. Sets as active organization for current user
+
+```python
+org = Organization(name=name, created_at=now, updated_at=now)
+session.add(org)
+await session.flush()
+
+member = OrganizationMember(
+    organization_id=org.id,
+    user_id=auth.user.id,
+    role="owner",
+    all_boards_read=True,
+    all_boards_write=True,
+    created_at=now,
+    updated_at=now,
+)
+```
+
+### 2. List Your Organizations
+
+```bash
+GET /api/v1/organizations/me/list
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "<org-id>",
+    "name": "Acme Corp",
+    "role": "owner",
+    "is_active": true
+  },
+  {
+    "id": "<other-org-id>",
+    "name": "Beta Inc",
+    "role": "member",
+    "is_active": false
+  }
+]
+```
+
+**Source:** `backend/app/api/organizations.py:163-194`
+
+### 3. Switch Active Organization
+
+Users can belong to multiple organizations. Set the active one:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/organizations/me/active \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "organization_id": "<org-id>"
+  }'
+```
+
+All subsequent requests operate in the context of the active organization.
+
+**Source:** `backend/app/api/organizations.py:197-216`
+
+## Member Management
+
+### Invite Members
+
+Organization admins can invite new members:
+
+<Steps>
+  <Step title="Create invite">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/organizations/me/invites \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "invited_email": "newuser@example.com",
+        "role": "member",
+        "all_boards_read": false,
+        "all_boards_write": false,
+        "board_access": [
+          {
+            "board_id": "<board-id>",
+            "can_read": true,
+            "can_write": false
+          }
+        ]
+      }'
+    ```
+  </Step>
+  
+  <Step title="Response includes token">
+    ```json
+    {
+      "id": "<invite-id>",
+      "organization_id": "<org-id>",
+      "invited_email": "newuser@example.com",
+      "token": "<24-char-urlsafe-token>",
+      "role": "member",
+      "created_at": "2026-03-05T12:00:00"
+    }
+    ```
+  </Step>
+  
+  <Step title="Share invite link">
+    Send the token to the invitee. They'll use it to accept:
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/organizations/invites/accept \
+      -H "Authorization: Bearer $NEW_USER_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "token": "<invite-token>"
+      }'
+    ```
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/organizations.py:608-665`
+
+### Invite Validation
+
+- Email must not already be a member
+- Board access entries must reference valid boards in the organization
+- Invite token is 24 URL-safe characters
+- Invitee email must match authenticated user's email
+
+**Source:** `backend/app/api/organizations.py:690-730`
+
+### Update Member Roles
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/organizations/me/members/<member-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "role": "admin"
+  }'
+```
+
+Roles:
+- `owner` - Full control, can delete organization
+- `admin` - Manage members, boards, agents
+- `member` - Access assigned boards only
+
+**Source:** `backend/app/api/organizations.py:469-488`
+
+### Board-Level Access Control
+
+Fine-tune member access to specific boards:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/organizations/me/members/<member-id>/access \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "all_boards_read": false,
+    "all_boards_write": false,
+    "board_access": [
+      {
+        "board_id": "<board-id-1>",
+        "can_read": true,
+        "can_write": true
+      },
+      {
+        "board_id": "<board-id-2>",
+        "can_read": true,
+        "can_write": false
+      }
+    ]
+  }'
+```
+
+**Source:** `backend/app/api/organizations.py:491-522`
+
+### Remove Members
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/organizations/me/members/<member-id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Restrictions:**
+- Cannot remove yourself
+- Only owners can remove other owners
+- Organization must have at least one owner
+
+**Source:** `backend/app/api/organizations.py:525-587`
+
+## Delete Organization
+
+<Warning>
+Deleting an organization is **irreversible** and removes all boards, agents, tasks, and related data.
+</Warning>
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/organizations/me \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Only organization owners can delete.**
+
+The backend cascades deletion to:
+- Boards and board groups
+- Tasks and task dependencies
+- Agents
+- Gateways
+- Approvals
+- Activity events
+- Webhooks and webhook payloads
+- Board memory
+- Organization members
+- Invites
+
+**Source:** `backend/app/api/organizations.py:227-399`
+
+## List Organization Members
+
+```bash
+GET /api/v1/organizations/me/members
+```
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "<member-id>",
+      "user_id": "<user-id>",
+      "role": "owner",
+      "all_boards_read": true,
+      "all_boards_write": true,
+      "user": {
+        "id": "<user-id>",
+        "email": "admin@home.local",
+        "name": "Admin User"
+      },
+      "board_access": []
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/organizations.py:419-441`
+
+## Database Schema
+
+```sql
+CREATE TABLE organizations (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE TABLE organization_members (
+    id UUID PRIMARY KEY,
+    organization_id UUID REFERENCES organizations(id),
+    user_id UUID REFERENCES users(id),
+    role TEXT CHECK (role IN ('owner', 'admin', 'member')),
+    all_boards_read BOOLEAN DEFAULT FALSE,
+    all_boards_write BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE TABLE organization_board_access (
+    id UUID PRIMARY KEY,
+    organization_member_id UUID REFERENCES organization_members(id),
+    board_id UUID REFERENCES boards(id),
+    can_read BOOLEAN DEFAULT TRUE,
+    can_write BOOLEAN DEFAULT FALSE
+);
+```
+
+**Source:** `backend/app/models/organizations.py`, `backend/app/models/organization_members.py`
+
+## See Also
+
+- [Authentication](/guides/authentication)
+- [Managing Boards](/guides/managing-boards)
+- [Agent Provisioning](/guides/agent-provisioning)

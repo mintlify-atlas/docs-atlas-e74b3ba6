@@ -1,0 +1,461 @@
+---
+title: 'Clerk JWT Authentication'
+description: 'Multi-user JWT authentication for production deployments'
+icon: 'user-shield'
+---
+
+## Overview
+
+Clerk JWT authentication enables multi-user authentication with industry-standard JWT tokens. This mode is recommended for:
+
+- Production deployments with multiple users
+- Team collaboration environments
+- Applications requiring user management features
+
+Each user authenticates individually via Clerk and receives their own JWT token. User records are automatically created and synced from Clerk claims.
+
+## Configuration
+
+### Prerequisites
+
+<Steps>
+  <Step title="Create Clerk Account">
+    Sign up for a Clerk account at [clerk.com](https://clerk.com)
+  </Step>
+  
+  <Step title="Create Application">
+    Create a new application in the Clerk dashboard
+  </Step>
+  
+  <Step title="Get API Keys">
+    Copy your `Secret Key` and `Publishable Key` from the Clerk dashboard
+  </Step>
+</Steps>
+
+### Backend Configuration
+
+Set the following environment variables in your backend `.env` file:
+
+```bash backend/.env
+AUTH_MODE=clerk
+CLERK_SECRET_KEY=sk_live_...
+CLERK_API_URL=https://api.clerk.com
+CLERK_VERIFY_IAT=true
+CLERK_LEEWAY=10.0
+```
+
+<ParamField path="AUTH_MODE" type="string" required>
+  Must be set to `clerk` to enable Clerk JWT authentication
+</ParamField>
+
+<ParamField path="CLERK_SECRET_KEY" type="string" required>
+  Your Clerk secret key (starts with `sk_live_` or `sk_test_`). Found in Clerk dashboard under API Keys.
+</ParamField>
+
+<ParamField path="CLERK_API_URL" type="string" default="https://api.clerk.com">
+  Clerk API base URL. Use default unless using Clerk's EU instance.
+</ParamField>
+
+<ParamField path="CLERK_VERIFY_IAT" type="boolean" default="true">
+  Whether to verify the JWT `iat` (issued at) claim
+</ParamField>
+
+<ParamField path="CLERK_LEEWAY" type="number" default="10.0">
+  Clock skew tolerance in seconds for JWT validation. Allows for small time differences between servers.
+</ParamField>
+
+### Frontend Configuration
+
+Set the following environment variables in your frontend `.env.local` file:
+
+```bash frontend/.env.local
+NEXT_PUBLIC_AUTH_MODE=clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/boards
+NEXT_PUBLIC_CLERK_AFTER_SIGN_OUT_URL=/
+```
+
+<ParamField path="NEXT_PUBLIC_AUTH_MODE" type="string" required>
+  Must be set to `clerk`
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" type="string" required>
+  Your Clerk publishable key (starts with `pk_live_` or `pk_test_`). Found in Clerk dashboard under API Keys.
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL" type="string" default="/boards">
+  Where to redirect users after successful sign in
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CLERK_AFTER_SIGN_OUT_URL" type="string" default="/">
+  Where to redirect users after signing out
+</ParamField>
+
+## Authentication Flow
+
+<Steps>
+  <Step title="User Signs In via Clerk">
+    User authenticates through Clerk's UI components (sign in modal, redirect flow, etc.)
+  </Step>
+  
+  <Step title="Clerk Issues JWT">
+    Clerk issues a session token (JWT) containing user claims
+  </Step>
+  
+  <Step title="Frontend Includes JWT">
+    Frontend automatically includes the JWT in API requests via `Authorization: Bearer <jwt>` header
+  </Step>
+  
+  <Step title="Backend Verifies JWT">
+    Backend verifies JWT signature using Clerk's public keys and validates claims:
+    - Signature verification
+    - Expiration check (`exp` claim)
+    - Issued-at validation (`iat` claim with leeway)
+    - Token type validation (must be `session_token`)
+  </Step>
+  
+  <Step title="User Context Resolution">
+    Backend extracts `sub` claim (Clerk user ID) and:
+    - Creates user record if it doesn't exist
+    - Syncs email and name from token claims or Clerk API
+    - Creates organization membership if needed
+  </Step>
+</Steps>
+
+## JWT Token Structure
+
+### Required Claims
+
+Mission Control validates the following JWT claims:
+
+<ResponseField name="sub" type="string" required>
+  Clerk user ID (e.g., `user_2abcXYZ`). Used as the primary user identifier.
+</ResponseField>
+
+<ResponseField name="exp" type="number" required>
+  Token expiration timestamp (Unix epoch). Tokens are rejected after this time.
+</ResponseField>
+
+<ResponseField name="iat" type="number" required>
+  Token issued-at timestamp (Unix epoch). Validated with `CLERK_LEEWAY` tolerance.
+</ResponseField>
+
+### Optional Claims (User Profile)
+
+Mission Control extracts user profile information from these claims:
+
+<ResponseField name="email" type="string">
+  Primary email address. Also checks `email_address` and `primary_email_address`.
+</ResponseField>
+
+<ResponseField name="email_addresses" type="array">
+  Array of email address objects. Used as fallback if `email` claim is not present.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Full display name. Also checks `full_name`.
+</ResponseField>
+
+<ResponseField name="first_name" type="string">
+  First name. Combined with `last_name` if `name` is not present.
+</ResponseField>
+
+<ResponseField name="last_name" type="string">
+  Last name. Combined with `first_name` if `name` is not present.
+</ResponseField>
+
+## API Usage
+
+### Making Authenticated Requests
+
+Include the Clerk session token in the `Authorization` header:
+
+```bash
+curl -X GET https://api.example.com/api/v1/users/me \
+  -H "Authorization: Bearer <clerk-session-token>"
+```
+
+### Bootstrap User Context
+
+<CodeGroup>
+```bash cURL
+# Get session token from Clerk first
+SESSION_TOKEN="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST https://api.example.com/api/v1/auth/bootstrap \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+```javascript JavaScript
+import { useAuth } from '@clerk/nextjs';
+
+const { getToken } = useAuth();
+
+const response = await fetch('https://api.example.com/api/v1/auth/bootstrap', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${await getToken()}`
+  }
+});
+
+const user = await response.json();
+console.log(user);
+```
+
+```python Python
+import httpx
+
+# Assume you have a Clerk session token
+session_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+response = httpx.post(
+    "https://api.example.com/api/v1/auth/bootstrap",
+    headers={"Authorization": f"Bearer {session_token}"}
+)
+
+user = response.json()
+print(user)
+```
+</CodeGroup>
+
+**Response:**
+```json
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "clerk_user_id": "user_2abcXYZ",
+  "email": "alex@example.com",
+  "name": "Alex Chen",
+  "preferred_name": "Alex",
+  "pronouns": "they/them",
+  "timezone": "America/Los_Angeles",
+  "notes": "Primary operator for board triage.",
+  "context": "Handles incident coordination and escalation.",
+  "is_super_admin": false
+}
+```
+
+## User Synchronization
+
+### Automatic User Creation
+
+When a user authenticates for the first time, Mission Control:
+
+1. Extracts `sub` claim from JWT (Clerk user ID)
+2. Looks up user by `clerk_user_id` in the database
+3. If not found, creates a new user record with:
+   - Email and name from token claims
+   - If claims are incomplete, fetches full profile from Clerk API
+4. Creates organization membership
+
+### Profile Updates
+
+Mission Control updates user profiles on each authentication:
+
+- **Email**: Updated if changed in Clerk
+- **Name**: Updated only if currently empty in database
+- **Other fields**: Not automatically updated (user must update via API)
+
+### Clerk API Fallback
+
+If email or name are missing from JWT claims, Mission Control fetches the full user profile from Clerk API using the `/v1/users/{user_id}` endpoint. This happens:
+
+- On first authentication (user creation)
+- When existing user has missing email or name
+
+## JWT Verification Details
+
+### Signature Verification
+
+The backend uses the official Clerk SDK to verify JWT signatures:
+
+1. **Fetch public keys** from Clerk's JWKS endpoint
+2. **Verify signature** using RSA public key
+3. **Check token type** (must be `session_token`)
+4. **Validate expiration** with clock skew tolerance
+
+### Clock Skew Tolerance
+
+The `CLERK_LEEWAY` setting allows for small time differences between servers:
+
+```python
+# Token issued at: 1234567890
+# Current time:    1234567895 (5 seconds later)
+# Leeway:          10 seconds
+# Result:          Valid ✓
+
+# Token issued at: 1234567890
+# Current time:    1234567905 (15 seconds later)
+# Leeway:          10 seconds
+# Result:          Invalid ✗
+```
+
+## Error Handling
+
+### Missing Token
+
+**Request:**
+```bash
+curl -X GET https://api.example.com/api/v1/users/me
+```
+
+**Response:** `401 Unauthorized`
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+### Invalid JWT Signature
+
+**Request:**
+```bash
+curl -X GET https://api.example.com/api/v1/users/me \
+  -H "Authorization: Bearer invalid.jwt.token"
+```
+
+**Response:** `401 Unauthorized`
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+### Expired Token
+
+**Request with expired JWT**
+
+**Response:** `401 Unauthorized`
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+<Note>
+  Clerk automatically refreshes session tokens. If you receive 401 errors, ensure your client is using the latest token from `getToken()`.
+</Note>
+
+### Missing User ID
+
+**JWT without `sub` claim**
+
+**Response:** `401 Unauthorized`
+```json
+{
+  "detail": "Not authenticated"
+}
+```
+
+## User Deletion
+
+When a user is deleted in Mission Control, the system can optionally delete the user from Clerk:
+
+```python
+from app.core.auth import delete_clerk_user
+
+# Delete user from Clerk
+await delete_clerk_user(clerk_user_id="user_2abcXYZ")
+```
+
+This uses the Clerk SDK to call `DELETE /v1/users/{user_id}`.
+
+## Common Issues
+
+### CORS Errors
+
+<Warning>
+  **Symptom**: Browser blocks API requests with CORS errors
+  
+  **Solution**: Add your frontend origin to `CORS_ORIGINS` in backend `.env`:
+  ```bash
+  CORS_ORIGINS=http://localhost:3000,https://app.example.com
+  ```
+</Warning>
+
+### Wrong Clerk Instance
+
+<Warning>
+  **Symptom**: JWT verification fails with valid tokens
+  
+  **Solution**: Ensure `CLERK_SECRET_KEY` matches the Clerk application. Check if you're using EU instance:
+  ```bash
+  CLERK_API_URL=https://api.clerk.eu
+  ```
+</Warning>
+
+### Clock Skew Too Large
+
+<Warning>
+  **Symptom**: Valid tokens rejected with timing errors
+  
+  **Solution**: Increase `CLERK_LEEWAY` or sync server clocks:
+  ```bash
+  CLERK_LEEWAY=30.0  # 30 seconds tolerance
+  ```
+</Warning>
+
+### Missing Email or Name
+
+<Warning>
+  **Symptom**: Users created with null email/name
+  
+  **Solution**: Ensure Clerk application is configured to collect email and name during sign up
+</Warning>
+
+## Best Practices
+
+<Check>
+  **Use environment-specific keys**: Separate `test` and `live` keys for development and production
+</Check>
+
+<Check>
+  **Rotate secret keys**: Periodically rotate Clerk secret keys via the dashboard
+</Check>
+
+<Check>
+  **Monitor token expiration**: Clerk tokens typically expire after 60 minutes. Ensure your client refreshes tokens automatically.
+</Check>
+
+<Check>
+  **Enable MFA**: Configure multi-factor authentication in Clerk for enhanced security
+</Check>
+
+<Warning>
+  **Never expose secret keys**: Keep `CLERK_SECRET_KEY` private. Only use it in backend code.
+</Warning>
+
+## Advanced Configuration
+
+### Custom JWT Claims
+
+You can add custom claims to Clerk JWTs via Clerk's dashboard or API. Mission Control will preserve these claims in the `payload` dict but doesn't use them by default.
+
+### Session Management
+
+Clerk handles session management automatically:
+
+- **Token refresh**: Clerk SDK automatically refreshes tokens before expiration
+- **Session duration**: Configure in Clerk dashboard (default: 7 days)
+- **Idle timeout**: Configure automatic sign out after inactivity
+
+### Webhook Integration
+
+You can configure Clerk webhooks to sync user changes in real-time:
+
+1. Configure webhook URL in Clerk dashboard
+2. Subscribe to `user.updated` and `user.deleted` events
+3. Implement webhook handler to update Mission Control database
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Local Token" icon="key" href="/api/auth/local">
+    Simpler authentication for self-hosted setups
+  </Card>
+  <Card title="Agent Tokens" icon="robot" href="/api/auth/agent-tokens">
+    Learn about agent authentication
+  </Card>
+  <Card title="Clerk Documentation" icon="book" href="https://clerk.com/docs" target="_blank">
+    Official Clerk documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,396 @@
+---
+title: 'Organization Invites'
+description: 'Create and manage organization invitations'
+---
+
+## List Organization Invites
+
+### GET /organizations/me/invites
+
+Returns a paginated list of pending invites for the currently active organization.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Number of invites to return per page
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of invites to skip for pagination
+</ParamField>
+
+#### Response
+
+Returns a paginated response containing pending organization invites.
+
+<ResponseField name="items" type="array" required>
+  Array of organization invite objects
+</ResponseField>
+
+<ResponseField name="total" type="integer" required>
+  Total number of pending invites
+</ResponseField>
+
+<ResponseField name="limit" type="integer" required>
+  Number of items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer" required>
+  Current pagination offset
+</ResponseField>
+
+#### Invite Object Fields
+
+<ResponseField name="id" type="string (UUID)" required>
+  Unique identifier for the invite
+</ResponseField>
+
+<ResponseField name="organization_id" type="string (UUID)" required>
+  ID of the organization
+</ResponseField>
+
+<ResponseField name="invited_email" type="string" required>
+  Email address of the invited user (normalized to lowercase)
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  Role that will be assigned: `owner`, `admin`, or `member`
+</ResponseField>
+
+<ResponseField name="all_boards_read" type="boolean" required>
+  Whether invitee will have read access to all boards
+</ResponseField>
+
+<ResponseField name="all_boards_write" type="boolean" required>
+  Whether invitee will have write access to all boards
+</ResponseField>
+
+<ResponseField name="token" type="string" required>
+  Unique token used to accept the invite (24 URL-safe characters)
+</ResponseField>
+
+<ResponseField name="created_by_user_id" type="string (UUID)">
+  ID of the user who created the invite
+</ResponseField>
+
+<ResponseField name="accepted_by_user_id" type="string (UUID)">
+  ID of the user who accepted the invite (null if pending)
+</ResponseField>
+
+<ResponseField name="accepted_at" type="string (datetime)">
+  ISO 8601 timestamp when invite was accepted (null if pending)
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)" required>
+  ISO 8601 timestamp when invite was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)" required>
+  ISO 8601 timestamp when invite was last updated
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.com/organizations/me/invites?limit=20&offset=0" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+#### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "aa0e8400-e29b-41d4-a716-446655440000",
+      "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+      "invited_email": "newuser@example.com",
+      "role": "member",
+      "all_boards_read": true,
+      "all_boards_write": false,
+      "token": "xYz123AbC456DeF789GhI012",
+      "created_by_user_id": "880e8400-e29b-41d4-a716-446655440000",
+      "accepted_by_user_id": null,
+      "accepted_at": null,
+      "created_at": "2026-03-05T12:00:00.000Z",
+      "updated_at": "2026-03-05T12:00:00.000Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+#### Notes
+
+- Only returns invites that have not been accepted (`accepted_at` is null)
+- Results are ordered by creation date (newest first)
+
+---
+
+## Create Organization Invite
+
+### POST /organizations/me/invites
+
+Create a new invitation to join the organization.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Request Body
+
+<ParamField body="invited_email" type="string" required>
+  Email address of the person to invite (will be normalized to lowercase)
+</ParamField>
+
+<ParamField body="role" type="string" default="member">
+  Role to assign: `owner`, `admin`, or `member`
+</ParamField>
+
+<ParamField body="all_boards_read" type="boolean" default="false">
+  Grant read access to all boards
+</ParamField>
+
+<ParamField body="all_boards_write" type="boolean" default="false">
+  Grant write access to all boards
+</ParamField>
+
+<ParamField body="board_access" type="array" default="[]">
+  Array of board-specific access permissions
+</ParamField>
+
+#### Board Access Specification
+
+<ParamField body="board_access[].board_id" type="string (UUID)" required>
+  ID of the board
+</ParamField>
+
+<ParamField body="board_access[].can_read" type="boolean" default="true">
+  Read permission for this specific board
+</ParamField>
+
+<ParamField body="board_access[].can_write" type="boolean" default="false">
+  Write permission for this specific board
+</ParamField>
+
+#### Response
+
+Returns the created invite object with a unique token.
+
+#### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.com/organizations/me/invites" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "invited_email": "newuser@example.com",
+    "role": "member",
+    "all_boards_read": true,
+    "all_boards_write": false,
+    "board_access": [
+      {
+        "board_id": "990e8400-e29b-41d4-a716-446655440000",
+        "can_read": true,
+        "can_write": true
+      }
+    ]
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "id": "aa0e8400-e29b-41d4-a716-446655440000",
+  "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+  "invited_email": "newuser@example.com",
+  "role": "member",
+  "all_boards_read": true,
+  "all_boards_write": false,
+  "token": "xYz123AbC456DeF789GhI012",
+  "created_by_user_id": "880e8400-e29b-41d4-a716-446655440000",
+  "accepted_by_user_id": null,
+  "accepted_at": null,
+  "created_at": "2026-03-05T12:00:00.000Z",
+  "updated_at": "2026-03-05T12:00:00.000Z"
+}
+```
+
+#### Error Responses
+
+<ResponseField name="409 Conflict">
+  User with this email is already a member of the organization
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Content">
+  - Email is empty or invalid
+  - One or more board IDs do not belong to the organization
+</ResponseField>
+
+#### Notes
+
+- Email addresses are normalized to lowercase before checking for existing members
+- A secure random token is automatically generated for the invite
+- The token should be sent to the invitee (this endpoint does not send emails automatically)
+- If the invited email already has a user account and is a member, the request fails with 409
+
+---
+
+## Revoke Organization Invite
+
+### DELETE /organizations/me/invites/{invite_id}
+
+Revoke a pending invitation.
+
+#### Authentication
+
+Requires organization admin or owner privileges.
+
+#### Path Parameters
+
+<ParamField path="invite_id" type="string (UUID)" required>
+  ID of the invite to revoke
+</ParamField>
+
+#### Response
+
+Returns the revoked invite object.
+
+#### Example Request
+
+```bash
+curl -X DELETE "https://api.openclaw.com/organizations/me/invites/aa0e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+#### Error Responses
+
+<ResponseField name="404 Not Found">
+  Invite not found or does not belong to the organization
+</ResponseField>
+
+#### Notes
+
+- Deletes the invite and all associated board access records
+- Once revoked, the invite token can no longer be used
+
+---
+
+## Accept Organization Invite
+
+### POST /organizations/invites/accept
+
+Accept an organization invitation using a token. This endpoint is publicly accessible (not scoped to `/me`).
+
+#### Authentication
+
+Requires authentication. The authenticated user's email must match the invited email.
+
+#### Request Body
+
+<ParamField body="token" type="string" required>
+  The unique invite token received from the organization
+</ParamField>
+
+#### Response
+
+Returns the created or updated membership record.
+
+<ResponseField name="id" type="string (UUID)" required>
+  ID of the membership record
+</ResponseField>
+
+<ResponseField name="organization_id" type="string (UUID)" required>
+  ID of the organization joined
+</ResponseField>
+
+<ResponseField name="user_id" type="string (UUID)" required>
+  ID of the user who accepted
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  Assigned role from the invite
+</ResponseField>
+
+<ResponseField name="all_boards_read" type="boolean" required>
+  Read access to all boards
+</ResponseField>
+
+<ResponseField name="all_boards_write" type="boolean" required>
+  Write access to all boards
+</ResponseField>
+
+<ResponseField name="created_at" type="string (datetime)" required>
+  When the membership was created
+</ResponseField>
+
+<ResponseField name="updated_at" type="string (datetime)" required>
+  When the membership was last updated
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Embedded user information
+</ResponseField>
+
+<ResponseField name="board_access" type="array">
+  Array of board-specific access permissions
+</ResponseField>
+
+#### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.com/organizations/invites/accept" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "xYz123AbC456DeF789GhI012"
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "id": "bb0e8400-e29b-41d4-a716-446655440000",
+  "organization_id": "550e8400-e29b-41d4-a716-446655440000",
+  "user_id": "cc0e8400-e29b-41d4-a716-446655440000",
+  "role": "member",
+  "all_boards_read": true,
+  "all_boards_write": false,
+  "created_at": "2026-03-05T13:00:00.000Z",
+  "updated_at": "2026-03-05T13:00:00.000Z",
+  "user": {
+    "id": "cc0e8400-e29b-41d4-a716-446655440000",
+    "email": "newuser@example.com",
+    "name": "New User",
+    "preferred_name": null
+  },
+  "board_access": []
+}
+```
+
+#### Error Responses
+
+<ResponseField name="403 Forbidden">
+  Authenticated user's email does not match the invited email
+</ResponseField>
+
+<ResponseField name="404 Not Found">
+  - Invalid token
+  - Invite has already been accepted
+</ResponseField>
+
+#### Notes
+
+- Email matching is case-insensitive
+- If the user is already a member, the invite permissions are merged with existing membership
+- The invite is marked as accepted with `accepted_by_user_id` and `accepted_at` fields
+- Invites can only be accepted once
+- The user must be authenticated, and their email must match the invite's `invited_email`

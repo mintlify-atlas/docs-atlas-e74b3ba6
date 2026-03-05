@@ -1,0 +1,176 @@
+---
+title: "List Agents"
+api: "GET /api/v1/agents"
+description: "List agents visible to the active organization admin"
+---
+
+Returns a paginated list of agents for the authenticated user's organization. Results can be filtered by board, gateway, or whether the agent is managed by Mission Control.
+
+## Authentication
+
+Requires organization admin authentication via `Authorization: Bearer <token>` header.
+
+## Query Parameters
+
+<ParamField query="board_id" type="UUID" optional>
+  Filter agents by board ID
+</ParamField>
+
+<ParamField query="gateway_id" type="UUID" optional>
+  Filter agents by gateway ID
+</ParamField>
+
+<ParamField query="is_mc_agent" type="boolean" optional>
+  Filter for agents managed by Mission Control (`true`) or manually configured agents (`false`)
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50" optional>
+  Number of items per page (max 100)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0" optional>
+  Number of items to skip for pagination
+</ParamField>
+
+## Response
+
+<ResponseField name="items" type="AgentRead[]">
+  Array of agent objects
+  
+  <ResponseField name="id" type="UUID">
+    Agent UUID
+  </ResponseField>
+  
+  <ResponseField name="gateway_id" type="UUID">
+    Gateway UUID that manages this agent
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="UUID" optional>
+    Board ID this agent is scoped to (null for gateway main agents)
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Human-readable agent display name
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Lifecycle state: `provisioning`, `ready`, `active`, `idle`, `paused`, `deleted`
+  </ResponseField>
+  
+  <ResponseField name="gateway_agent_id" type="string" optional>
+    Stable gateway agent ID in the OpenClaw runtime (e.g., `agent-01J...`)
+  </ResponseField>
+  
+  <ResponseField name="workspace_path" type="string" optional>
+    Workspace path on the gateway host (e.g., `/home/ubuntu/.openclaw/workspace-main`)
+  </ResponseField>
+  
+  <ResponseField name="is_mc_agent" type="boolean" optional>
+    Whether this agent is managed by Mission Control
+  </ResponseField>
+  
+  <ResponseField name="is_board_lead" type="boolean" default="false">
+    Whether this agent is the board lead
+  </ResponseField>
+  
+  <ResponseField name="is_gateway_main" type="boolean" default="false">
+    Whether this agent is the primary gateway agent
+  </ResponseField>
+  
+  <ResponseField name="openclaw_session_id" type="string" optional>
+    OpenClaw session token (e.g., `sess_01J...`)
+  </ResponseField>
+  
+  <ResponseField name="last_seen_at" type="datetime" optional>
+    Last heartbeat timestamp
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="datetime">
+    Creation timestamp
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="datetime">
+    Last update timestamp
+  </ResponseField>
+  
+  <ResponseField name="heartbeat_config" type="object" optional>
+    Runtime heartbeat behavior overrides
+    ```json
+    {
+      "interval_seconds": 30,
+      "missing_tolerance": 120
+    }
+    ```
+  </ResponseField>
+  
+  <ResponseField name="identity_profile" type="object" optional>
+    Profile hints for routing and policy
+    ```json
+    {
+      "role": "incident_lead",
+      "skill": "triage"
+    }
+    ```
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of agents matching the filters
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Items per page
+</ResponseField>
+
+<ResponseField name="offset" type="integer">
+  Current offset
+</ResponseField>
+
+## Example Request
+
+```bash
+curl -X GET "https://api.example.com/api/v1/agents?board_id=550e8400-e29b-41d4-a716-446655440000&limit=20" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "c91361ef-6d85-439c-82e1-8f388a302e6a",
+      "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+      "board_id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Clawd-CFO",
+      "status": "active",
+      "gateway_agent_id": "agent-01JCXYZ123",
+      "workspace_path": "/home/ubuntu/.openclaw/workspace-mc-c91361ef",
+      "is_mc_agent": true,
+      "is_board_lead": true,
+      "is_gateway_main": false,
+      "openclaw_session_id": "agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main",
+      "last_seen_at": "2026-03-05T10:30:00Z",
+      "created_at": "2026-03-01T08:00:00Z",
+      "updated_at": "2026-03-05T10:30:00Z",
+      "heartbeat_config": {
+        "interval_seconds": 60
+      },
+      "identity_profile": {
+        "role": "board_lead",
+        "specialty": "financial_ops"
+      }
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+## Use Cases
+
+- **Admin Dashboard**: Display all agents across the organization
+- **Board View**: Filter agents by `board_id` to show board-specific agents
+- **Gateway Management**: Use `gateway_id` to see all agents on a specific gateway
+- **Monitoring**: Check `last_seen_at` to identify offline agents

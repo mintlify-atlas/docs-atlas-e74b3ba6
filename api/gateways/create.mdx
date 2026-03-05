@@ -1,0 +1,184 @@
+---
+title: "Create Gateway"
+api: "POST /api/v1/gateways"
+description: "Register a new gateway and provision its main agent"
+---
+
+Creates a new gateway configuration in Mission Control and provisions or refreshes the gateway's main agent.
+
+## Authentication
+
+Requires organization admin authentication via `Authorization: Bearer <token>` header.
+
+## Request Body
+
+<ParamField body="name" type="string" required>
+  Human-readable gateway name (e.g., "Production Gateway")
+</ParamField>
+
+<ParamField body="url" type="string" required>
+  WebSocket URL of the gateway (e.g., `ws://gateway-host:18789` or `wss://gateway.example.com`)
+</ParamField>
+
+<ParamField body="workspace_root" type="string" required>
+  Root directory for agent workspaces on the gateway host
+  
+  Example: `/home/ubuntu/.openclaw/workspaces`
+</ParamField>
+
+<ParamField body="token" type="string" optional>
+  Authentication token for gateway RPC (optional for gateways without authentication)
+</ParamField>
+
+<ParamField body="allow_insecure_tls" type="boolean" default="false">
+  Skip TLS certificate validation (use only for development)
+</ParamField>
+
+<ParamField body="disable_device_pairing" type="boolean" default="false">
+  Disable device pairing and use `control_ui` mode
+  
+  **Important**: When `true`, the gateway must have `dangerouslyDisableDeviceAuth: true` in its config
+</ParamField>
+
+## Response
+
+Returns a `GatewayRead` object with the same structure as [List Gateways](/api/gateways/list).
+
+## Gateway Creation Workflow
+
+When you create a gateway, Mission Control:
+
+1. **Validates** the gateway URL is reachable
+2. **Checks** gateway runtime version meets minimum requirements (`GATEWAY_MIN_VERSION`)
+3. **Creates** gateway record in database
+4. **Provisions** or updates the gateway main agent
+5. **Returns** the gateway configuration
+
+## Gateway Main Agent
+
+Every gateway has a main agent that:
+
+- Has `is_gateway_main=true` and `board_id=null`
+- Acts as the gateway's primary orchestrator
+- Can access multiple boards when permitted
+- Is automatically created/updated during gateway operations
+
+## Example Request
+
+```bash
+curl -X POST "https://api.example.com/api/v1/gateways" \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Gateway",
+    "url": "ws://72.62.201.147:18789",
+    "workspace_root": "/home/ubuntu/.openclaw/workspaces",
+    "disable_device_pairing": true,
+    "allow_insecure_tls": false
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "organization_id": "org-123e4567-e89b-12d3-a456-426614174000",
+  "name": "Production Gateway",
+  "url": "ws://72.62.201.147:18789",
+  "workspace_root": "/home/ubuntu/.openclaw/workspaces",
+  "gateway_agent_id": "agent-01JCXYZ123",
+  "allow_insecure_tls": false,
+  "disable_device_pairing": true,
+  "created_at": "2026-03-05T10:30:00Z",
+  "updated_at": "2026-03-05T10:30:00Z"
+}
+```
+
+## Gateway Configuration Requirements
+
+### OpenClaw Configuration
+
+Before creating a gateway with `disable_device_pairing=true`, ensure the gateway has this configuration in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+
+Then restart the gateway:
+
+```bash
+# Stop the gateway
+pkill -f openclaw
+
+# Start the gateway
+openclaw gateway start
+```
+
+### Network Connectivity
+
+Ensure the gateway is reachable from Mission Control:
+
+```bash
+# Test connectivity
+wscat -c ws://gateway-host:18789
+
+# Should see WebSocket connection established
+```
+
+## Error Responses
+
+<ResponseField name="400 Bad Request">
+  Invalid URL format or missing required fields
+</ResponseField>
+
+<ResponseField name="403 Forbidden">
+  Insufficient permissions (not organization admin)
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Entity">
+  Validation failed (e.g., workspace_root is empty)
+</ResponseField>
+
+<ResponseField name="502 Bad Gateway">
+  Gateway is unreachable or authentication failed
+</ResponseField>
+
+<ResponseField name="503 Service Unavailable">
+  Gateway version is below minimum required version
+</ResponseField>
+
+## Post-Creation Steps
+
+ After creating a gateway:
+
+1. **Verify Connectivity**: Check gateway status via [Gateway Status](/api/gateways/sessions)
+2. **Sync Templates**: Run [Template Sync](/api/gateways/templates) to configure agents
+3. **Create Board Agents**: Provision agents for your boards
+4. **Test Agent Communication**: Verify agents can authenticate and make API calls
+
+## Troubleshooting
+
+### "Gateway is unreachable"
+
+- Check gateway URL is correct
+- Verify gateway is running: `ps aux | grep openclaw`
+- Test network connectivity: `nc -zv gateway-host 18789`
+
+### "Missing scope: operator.read"
+
+- Ensure `dangerouslyDisableDeviceAuth: true` in gateway config
+- Restart gateway after config changes
+- Verify `disable_device_pairing: true` in gateway record
+
+### "Gateway version too old"
+
+- Upgrade gateway to version ≥ `GATEWAY_MIN_VERSION` (default: 2026.02.9)
+- Check version: `openclaw --version`

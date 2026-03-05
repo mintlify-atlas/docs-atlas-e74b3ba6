@@ -1,0 +1,348 @@
+---
+title: "Sync Gateway Templates"
+api: "POST /api/v1/gateways/{gateway_id}/templates/sync"
+description: "Synchronize agent configuration files to the gateway"
+---
+
+Synchronizes agent templates (TOOLS.md, IDENTITY.md, SOUL.md) from Mission Control to agent workspaces on the gateway. This operation writes or updates configuration files for board agents and optionally the gateway main agent.
+
+## Authentication
+
+Requires organization admin authentication via `Authorization: Bearer <token>` header.
+
+## Path Parameters
+
+<ParamField path="gateway_id" type="UUID" required>
+  Gateway UUID to synchronize
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="include_main" type="boolean" default="true" optional>
+  Include the gateway main agent in the sync operation
+</ParamField>
+
+<ParamField query="lead_only" type="boolean" default="false" optional>
+  Sync only board lead agents (skip worker agents)
+</ParamField>
+
+<ParamField query="reset_sessions" type="boolean" default="false" optional>
+  Force reset of agent sessions during sync
+</ParamField>
+
+<ParamField query="rotate_tokens" type="boolean" default="false" optional>
+  Generate new authentication tokens for all agents
+  
+  **Critical**: Required when:
+  - First-time gateway setup
+  - Agents are missing from `openclaw.json`
+  - Agent tokens were compromised
+</ParamField>
+
+<ParamField query="force_bootstrap" type="boolean" default="false" optional>
+  Force re-bootstrap of agent provisioning
+</ParamField>
+
+<ParamField query="overwrite" type="boolean" default="false" optional>
+  Overwrite existing template files even if unchanged
+</ParamField>
+
+<ParamField query="board_id" type="UUID" optional>
+  Limit sync to agents on a specific board
+</ParamField>
+
+## Response
+
+<ResponseField name="gateway_id" type="UUID">
+  Gateway UUID that was synchronized
+</ResponseField>
+
+<ResponseField name="include_main" type="boolean">
+  Whether main agent was included in sync
+</ResponseField>
+
+<ResponseField name="reset_sessions" type="boolean">
+  Whether sessions were reset
+</ResponseField>
+
+<ResponseField name="agents_updated" type="integer">
+  Number of agents successfully updated
+</ResponseField>
+
+<ResponseField name="agents_skipped" type="integer">
+  Number of agents skipped (no changes or errors)
+</ResponseField>
+
+<ResponseField name="main_updated" type="boolean">
+  Whether the main agent was updated
+</ResponseField>
+
+<ResponseField name="errors" type="GatewayTemplatesSyncError[]">
+  Array of per-agent errors encountered during sync
+  
+  <ResponseField name="agent_id" type="UUID" optional>
+    Agent UUID that failed
+  </ResponseField>
+  
+  <ResponseField name="agent_name" type="string" optional>
+    Agent display name
+  </ResponseField>
+  
+  <ResponseField name="board_id" type="UUID" optional>
+    Board UUID if agent is board-scoped
+  </ResponseField>
+  
+  <ResponseField name="message" type="string">
+    Error description
+  </ResponseField>
+</ResponseField>
+
+## Template Sync Workflow
+
+For each agent selected for sync:
+
+1. **Read existing token** from `TOOLS.md` (if `rotate_tokens=false`)
+2. **Generate new token** (if `rotate_tokens=true` or token not found)
+3. **Render templates** from Jinja2 sources:
+   - `BOARD_TOOLS.md.j2` → `TOOLS.md`
+   - `BOARD_IDENTITY.md.j2` → `IDENTITY.md` (if `identity_template` exists)
+   - `BOARD_SOUL.md.j2` → `SOUL.md` (if `soul_template` exists)
+4. **Write files** to agent workspace via gateway RPC: `agents.files.set()`
+5. **Update database** with new token hash (if rotated)
+
+## Template Variables
+
+Templates are rendered with these variables:
+
+- `base_url` - Mission Control API URL (from `BASE_URL` env var)
+- `auth_token` - Agent authentication token
+- `agent_name` - Agent display name
+- `agent_id` - Agent UUID
+- `board_id` - Board UUID (for board agents)
+- `workspace_root` - Gateway workspace root path
+- `workspace_path` - Agent's specific workspace path
+
+## When to Use `rotate_tokens=true`
+
+**Required in these scenarios:**
+
+1. **First-time setup**: Initial gateway configuration
+2. **Missing openclaw.json entries**: Agents `mc-*` were removed from gateway config
+3. **Token compromise**: Security incident requiring token rotation
+4. **Cannot read TOOLS.md**: Gateway returns "file not found" errors
+
+**Symptoms requiring token rotation:**
+
+```json
+{
+  "errors": [
+    {
+      "agent_name": "Financial Ops Lead",
+      "message": "unable to read AUTH_TOKEN from TOOLS.md (run with rotate_tokens=true)"
+    }
+  ]
+}
+```
+
+## Example Request (Normal Sync)
+
+```bash
+curl -X POST "https://api.example.com/api/v1/gateways/55cc268a-4b45-400f-accf-201e025232ac/templates/sync" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Example Request (Full Reset)
+
+```bash
+curl -X POST "https://api.example.com/api/v1/gateways/55cc268a-4b45-400f-accf-201e025232ac/templates/sync?rotate_tokens=true&overwrite=true&reset_sessions=true" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Example Request (Board-Specific Sync)
+
+```bash
+curl -X POST "https://api.example.com/api/v1/gateways/55cc268a-4b45-400f-accf-201e025232ac/templates/sync?board_id=550e8400-e29b-41d4-a716-446655440000&overwrite=true" \
+  -H "Authorization: Bearer your-token-here"
+```
+
+## Example Response (Success)
+
+```json
+{
+  "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "include_main": true,
+  "reset_sessions": false,
+  "agents_updated": 5,
+  "agents_skipped": 0,
+  "main_updated": true,
+  "errors": []
+}
+```
+
+## Example Response (With Errors)
+
+```json
+{
+  "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "include_main": true,
+  "reset_sessions": false,
+  "agents_updated": 3,
+  "agents_skipped": 2,
+  "main_updated": true,
+  "errors": [
+    {
+      "agent_id": "c91361ef-6d85-439c-82e1-8f388a302e6a",
+      "agent_name": "Financial Ops Lead",
+      "board_id": "550e8400-e29b-41d4-a716-446655440000",
+      "message": "unable to read AUTH_TOKEN from TOOLS.md (run with rotate_tokens=true)"
+    }
+  ]
+}
+```
+
+## Common Sync Scenarios
+
+### Scenario 1: Regular Template Update
+
+After updating agent templates or configuration:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Scenario 2: Initial Gateway Setup
+
+First time configuring a gateway:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true&overwrite=true&force_bootstrap=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Scenario 3: Emergency Token Rotation
+
+After security incident:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true&reset_sessions=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Scenario 4: Sync Single Board
+
+Update only agents on a specific board:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?board_id=$BOARD_ID&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Scenario 5: Update Only Lead Agents
+
+Sync configuration for board leads only:
+
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?lead_only=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Error Recovery
+
+### "unable to read AUTH_TOKEN from TOOLS.md"
+
+**Cause**: Agent entry missing from `openclaw.json` on the gateway.
+
+**Solution**:
+```bash
+curl -X POST "$BASE_URL/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### "Gateway RPC call failed"
+
+**Causes**:
+- Gateway is offline or unreachable
+- Network connectivity issues
+- Gateway authentication failed
+
+**Solution**:
+1. Check gateway status: `systemctl status openclaw-gateway`
+2. Verify network: `nc -zv gateway-host 18789`
+3. Test gateway auth: Review gateway logs
+
+### "Missing scope: operator.read"
+
+**Cause**: Gateway missing `dangerouslyDisableDeviceAuth` setting.
+
+**Solution**: Update `~/.openclaw/openclaw.json`:
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+
+Then restart gateway and retry sync.
+
+## Best Practices
+
+1. **Regular Syncs**: Run template sync after updating agent configurations
+2. **Token Rotation**: Use `rotate_tokens=true` only when necessary (expensive operation)
+3. **Dry Runs**: Test sync on a single board first before syncing all boards
+4. **Error Monitoring**: Check `errors` array in response and fix before retrying
+5. **Incremental Updates**: Use `board_id` parameter to limit scope when possible
+6. **Overwrite Control**: Use `overwrite=false` (default) to avoid unnecessary writes
+
+## Template Files Generated
+
+### TOOLS.md
+
+Contains API credentials and endpoints:
+
+```markdown
+# API Configuration
+
+- BASE_URL=https://api.example.com
+- AUTH_TOKEN=agent-secret-token
+- AGENT_ID=c91361ef-6d85-439c-82e1-8f388a302e6a
+- BOARD_ID=550e8400-e29b-41d4-a716-446655440000
+- WORKSPACE_ROOT=/home/ubuntu/.openclaw
+- WORKSPACE_PATH=/home/ubuntu/.openclaw/workspace-mc-c91361ef
+
+## Making API Calls
+
+curl -H "X-Agent-Token: $AUTH_TOKEN" \
+  "$BASE_URL/api/v1/agent/healthz"
+```
+
+### IDENTITY.md
+
+Agent role and behavior (if `identity_template` is set):
+
+```markdown
+# Agent Identity
+
+You are a CFO agent responsible for financial planning and analysis.
+
+## Responsibilities
+- Review budget proposals
+- Analyze financial metrics
+- Report to board on financial health
+```
+
+### SOUL.md
+
+Deeper agent instructions (if `soul_template` is set):
+
+```markdown
+# Agent Soul
+
+When critical blockers appear, escalate in plain language.
+
+Always verify budget numbers before approving.
+```

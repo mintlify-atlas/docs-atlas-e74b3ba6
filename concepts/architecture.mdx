@@ -1,0 +1,344 @@
+---
+title: Architecture
+description: OpenClaw Mission Control system architecture and technical design
+---
+
+## Overview
+
+OpenClaw Mission Control is the centralized operations and governance platform for running OpenClaw across teams and organizations. It provides unified visibility, approval controls, and gateway-aware orchestration through a modern web UI and REST API.
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|-------|-----------|--------|
+| Backend API | FastAPI + SQLModel | Python 3.12 |
+| ORM | SQLAlchemy async + psycopg | 2.0 / 3.3 |
+| Database | PostgreSQL | 16 |
+| Migrations | Alembic | 1.18 |
+| Job Queue | Redis + RQ | 7 / 2.6 |
+| Templates | Jinja2 | 3.1 |
+| Frontend | Next.js App Router | 16 (Turbopack) |
+| UI | React 19 + TypeScript | — |
+| Styles | Tailwind CSS | — |
+| API Client | Orval (generated) | — |
+| Auth | Local bearer token or Clerk JWT | — |
+
+## System Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                         Frontend                              │
+│          Next.js 16 + React 19 + TypeScript                  │
+│                    (Port 3000)                                │
+└───────────────────┬──────────────────────────────────────────┘
+                    │ REST API (JSON)
+                    │ Authorization: Bearer token
+┌───────────────────▼──────────────────────────────────────────┐
+│                     Backend API                               │
+│                 FastAPI (Port 8000)                           │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  API Routes (/api/v1)                                │   │
+│  │  • /auth, /users, /organizations                     │   │
+│  │  • /boards, /tasks, /agents                          │   │
+│  │  • /gateways, /approvals, /activity                  │   │
+│  └──────────────────┬───────────────────────────────────┘   │
+│                     │                                         │
+│  ┌──────────────────▼───────────────────────────────────┐   │
+│  │  Service Layer                                        │   │
+│  │  • openclaw/provisioning.py                          │   │
+│  │  • openclaw/admin_service.py                         │   │
+│  │  • webhooks/dispatch.py                              │   │
+│  │  • activity_log.py                                   │   │
+│  └──────────────────┬───────────────────────────────────┘   │
+│                     │                                         │
+│  ┌──────────────────▼───────────────────────────────────┐   │
+│  │  Data Models (SQLModel + SQLAlchemy)                 │   │
+│  │  organizations, boards, tasks, agents, gateways      │   │
+│  └──────────────────┬───────────────────────────────────┘   │
+└────────────────────┬┼──────────────────────────────────────┘
+                     ││
+         ┌───────────┘└──────────────┐
+         │                            │
+  ┌──────▼─────────┐          ┌──────▼──────────┐
+  │   PostgreSQL   │          │  Redis + RQ      │
+  │   (Port 5432)  │          │  (Port 6379)     │
+  │                │          │  Background jobs │
+  └────────────────┘          └──────────────────┘
+                     │
+                     │ WebSocket RPC (Port 18789)
+                     │
+  ┌──────────────────▼──────────────────────────┐
+  │        OpenClaw Gateway                     │
+  │                                              │
+  │  • Agent provisioning and lifecycle         │
+  │  • Session management                       │
+  │  • File operations (TOOLS.md, templates)    │
+  │  • Runtime coordination                     │
+  └──────────────────────────────────────────────┘
+```
+
+## Core Components
+
+### Frontend (Next.js)
+
+The frontend is a modern Next.js 16 application using:
+- **App Router** for file-based routing
+- **React 19** with TypeScript for type safety
+- **Tailwind CSS** for styling
+- **Orval-generated client** for type-safe API calls
+- **React Query** for data fetching and caching
+
+Key routes:
+- `/boards` - Board and task management
+- `/agents` - Agent lifecycle (admin only)
+- `/gateways` - Gateway configuration (admin only)
+- `/approvals` - Approval workflows
+- `/activity` - Activity feed and audit logs
+- `/organization` - Organization settings
+
+### Backend (FastAPI)
+
+The backend provides a REST API with:
+- **~22 API route modules** under `/api/v1`
+- **SQLModel models** (~30 database tables)
+- **Pydantic schemas** for request/response validation
+- **Service layer** for business logic
+- **Async database operations** with SQLAlchemy 2.0
+
+#### Entry Point
+
+`app/main.py` defines:
+- Custom `MissionControlFastAPI` class extending FastAPI
+- Lifespan hook for database initialization
+- CORS configuration
+- Health check endpoints: `/health`, `/healthz`, `/readyz`
+- Router registration for all API modules
+
+#### Configuration
+
+`app/core/config.py` provides `Settings` class (Pydantic BaseSettings):
+
+```python
+class Settings(BaseSettings):
+    environment: str = "dev"
+    database_url: str
+    auth_mode: AuthMode  # "local" or "clerk"
+    local_auth_token: str  # ≥50 chars when auth_mode=local
+    cors_origins: str  # comma-separated origins
+    base_url: str  # public backend URL
+    db_auto_migrate: bool = False  # true in dev
+    rq_redis_url: str
+    gateway_min_version: str = "2026.02.9"
+```
+
+### Database Layer
+
+PostgreSQL stores all system state:
+- Organizations and membership
+- Boards, board groups, and tasks
+- Agents and gateways
+- Approvals and activity events
+- Board memory (key-value storage)
+- Webhooks and custom fields
+
+Migrations managed with **Alembic** (40+ versions).
+
+### Job Queue (Redis + RQ)
+
+Asynchronous job processing for:
+- Webhook dispatch with retry logic
+- Background template synchronization
+- Activity event processing
+
+Worker process: `rq worker -u redis://localhost:6379/0`
+
+### Gateway Integration
+
+Mission Control integrates with OpenClaw Gateway via:
+- **WebSocket RPC** protocol (JSON-RPC style)
+- **Agent provisioning** - create/update/delete agents
+- **File operations** - write TOOLS.md and templates
+- **Session management** - query active sessions
+- **Template sync** - batch update agent configurations
+
+See [Gateways](/concepts/gateways) for details.
+
+## Authentication Architecture
+
+### Local Mode (`AUTH_MODE=local`)
+
+```
+Browser → [Authorization: Bearer <LOCAL_AUTH_TOKEN>] → Backend
+Backend → constant-time comparison with .env token
+Backend → creates/returns User with email "admin@home.local"
+```
+
+Requirements:
+- Token ≥50 characters
+- Non-placeholder value
+- Same token in frontend `NEXT_PUBLIC_LOCAL_AUTH_TOKEN`
+
+### Clerk Mode (`AUTH_MODE=clerk`)
+
+```
+Browser → Clerk UI → JWT token
+Browser → [Authorization: Bearer <jwt>] → Backend
+Backend → verifies JWT with Clerk public key
+Backend → extracts sub, email, name → creates/updates User
+```
+
+### Agent Authentication
+
+Agents use `X-Agent-Token` header:
+- Token hash stored in `agents.agent_token_hash`
+- Token embedded in agent's TOOLS.md file
+- Agent endpoints require `require_admin_or_agent` dependency
+
+## Data Flow
+
+### User Work Orchestration Flow
+
+```
+1. User creates board → POST /api/v1/boards
+2. Backend creates Board record with organization_id
+3. User creates agent → POST /api/v1/agents
+4. Backend:
+   a. Creates Agent record (status: "provisioning")
+   b. Calls gateway RPC: agents.create(mc-<uuid>)
+   c. Writes TOOLS.md to agent workspace
+   d. Updates Agent status to "ready"
+5. User creates task → POST /api/v1/tasks
+6. Backend creates Task record
+7. User assigns task to agent → POST /api/v1/tasks/{id}/assign-agent
+8. Agent reads tasks via API → GET /api/v1/agent/boards/{id}/tasks
+9. Agent updates task status → PATCH /api/v1/agent/boards/{id}/tasks/{tid}
+10. Backend triggers webhooks (async via RQ)
+11. Backend logs activity event
+```
+
+### Template Sync Flow
+
+```
+1. Admin triggers sync → POST /api/v1/gateways/{id}/templates/sync
+2. Backend queries all agents for gateway
+3. For each agent:
+   a. Read existing AUTH_TOKEN from TOOLS.md (if exists)
+   b. Render TOOLS.md, BOARD_SOUL.md, BOARD_IDENTITY.md with Jinja2
+   c. Write files via gateway RPC: agents.files.set()
+   d. Optionally reset session if reset_sessions=true
+4. Return sync result with counts and errors
+```
+
+## Repository Structure
+
+```
+mission-control/
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # FastAPI app entry point
+│   │   ├── core/
+│   │   │   ├── config.py        # Settings (env vars)
+│   │   │   ├── auth.py          # AuthContext, dependencies
+│   │   │   └── logging.py       # Structured logging
+│   │   ├── api/                 # ~22 route modules
+│   │   ├── models/              # SQLModel tables (~30)
+│   │   ├── schemas/             # Pydantic DTOs
+│   │   ├── services/
+│   │   │   ├── openclaw/        # Gateway integration
+│   │   │   ├── webhooks/        # Webhook dispatch
+│   │   │   └── activity_log.py  # Audit trail
+│   │   └── db/
+│   │       └── session.py       # AsyncSession factory
+│   ├── templates/               # Jinja2 agent templates
+│   ├── migrations/              # Alembic versions (40+)
+│   └── tests/                   # Pytest suite (60+ files)
+├── frontend/
+│   ├── src/
+│   │   ├── app/                 # Next.js App Router
+│   │   ├── auth/                # Auth helpers
+│   │   ├── api/
+│   │   │   ├── generated/       # Orval-generated client
+│   │   │   └── mutator.ts       # Custom fetch wrapper
+│   │   └── components/          # React components
+│   └── orval.config.ts          # API client generation
+└── compose.yml                   # Docker Compose config
+```
+
+## Key Design Principles
+
+1. **Operations-first**: Built for running agent work reliably, not just task management
+2. **API-first**: All UI operations available via REST API
+3. **Gateway-aware**: Designed for distributed runtime environments
+4. **Governance built-in**: Approvals, roles, and audit logs are first-class
+5. **Async by default**: Database and external calls use async/await
+6. **Type-safe**: Full TypeScript on frontend, Pydantic validation on backend
+7. **Observable**: Activity events, audit logs, and structured logging throughout
+
+## Scalability Considerations
+
+### Current Design
+
+- Single backend server
+- Single PostgreSQL database
+- Single Redis instance
+- RQ workers (can scale horizontally)
+
+### Scaling Options
+
+1. **Backend**: Deploy multiple FastAPI instances behind load balancer
+2. **Database**: PostgreSQL read replicas, connection pooling
+3. **Redis**: Redis Cluster or Sentinel for HA
+4. **Workers**: Scale RQ worker count based on job queue depth
+5. **Storage**: Agent workspaces on shared filesystem or object storage
+
+## Security Model
+
+### Authentication
+
+- User auth via local token or Clerk JWT
+- Agent auth via X-Agent-Token header
+- Token validation on every request
+
+### Authorization
+
+- Organization-scoped resources
+- Role-based access control (owner/admin/member)
+- Agent can only access own board's tasks
+- Admin endpoints require owner/admin role
+
+### Data Protection
+
+- Passwords never stored (Clerk manages user auth)
+- Agent tokens hashed with bcrypt
+- CORS enforcement
+- SQL injection prevention via parameterized queries
+
+## Monitoring and Observability
+
+### Health Checks
+
+- `GET /health` - Basic liveness check
+- `GET /healthz` - Database connectivity check
+- `GET /readyz` - Full readiness check
+
+### Logging
+
+- Structured logging (JSON or text format)
+- Request/response logging
+- Slow query logging (configurable threshold)
+- Activity events stored in database
+
+### Metrics
+
+- Task counts by status
+- Agent activity metrics
+- Board metrics (via `/api/v1/metrics`)
+- Job queue statistics
+
+## Related Concepts
+
+- [Organizations](/concepts/organizations) - Multi-tenant structure
+- [Boards](/concepts/boards) - Work organization
+- [Agents](/concepts/agents) - Autonomous actors
+- [Gateways](/concepts/gateways) - Runtime integration
+- [Tasks](/concepts/tasks) - Work items

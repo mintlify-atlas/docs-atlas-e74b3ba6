@@ -1,0 +1,512 @@
+---
+title: Database Migrations
+description: Manage database schema changes using Alembic migrations
+---
+
+OpenClaw Mission Control uses [Alembic](https://alembic.sqlalchemy.org/) for database schema migrations. This guide covers migration workflows, commands, and best practices.
+
+## Overview
+
+Migrations are stored in `backend/migrations/versions/` and manage schema evolution over time. The migration system:
+
+- Tracks applied migrations in the `alembic_version` table
+- Supports forward migrations (`upgrade`) and rollbacks (`downgrade`)
+- Auto-generates migration scripts from SQLModel schema changes
+- Validates migration graph consistency in CI
+
+## Migration Files
+
+### Directory Structure
+
+```
+backend/
+├── alembic.ini              # Alembic configuration
+├── migrations/
+│   ├── env.py              # Alembic environment setup
+│   ├── versions/           # Migration scripts
+│   │   ├── 658dca8f4a11_init.py
+│   │   ├── 99cd6df95f85_add_indexes_for_board_memory_task_.py
+│   │   ├── a1e6b0d62f0c_drop_org_name_unique.py
+│   │   ├── b4338be78eec_add_composite_indexes_for_task_listing.py
+│   │   └── ...
+```
+
+### `alembic.ini`
+
+Configuration file at `backend/alembic.ini`:
+
+```ini
+[alembic]
+script_location = migrations
+prepend_sys_path = .
+sqlalchemy.url = driver://user:pass@localhost/dbname  # Overridden by env.py
+```
+
+The `sqlalchemy.url` is dynamically set by `migrations/env.py` using the `DATABASE_URL` environment variable.
+
+### `migrations/env.py`
+
+Runtime configuration that:
+
+1. Loads `app.models` to discover SQLModel schemas
+2. Reads `DATABASE_URL` from `app.core.config.settings`
+3. Normalizes database URL (`postgresql://` → `postgresql+psycopg://`)
+4. Configures online/offline migration modes
+
+Key function:
+
+```python
+def get_url() -> str:
+    """Return the normalized SQLAlchemy database URL for Alembic."""
+    return _normalize_database_url(settings.database_url)
+```
+
+## Running Migrations
+
+### Apply All Pending Migrations
+
+Upgrade to the latest schema:
+
+```bash
+cd backend
+.venv/bin/alembic upgrade head
+```
+
+**Docker Compose**:
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+**Makefile shortcut**:
+```bash
+make backend-migrate
+```
+
+### Apply Specific Migration
+
+Upgrade to a specific revision:
+
+```bash
+cd backend
+.venv/bin/alembic upgrade b4338be78eec  # Revision ID
+```
+
+### Rollback Migrations
+
+Downgrade to a previous revision:
+
+```bash
+cd backend
+.venv/bin/alembic downgrade -1  # Go back one revision
+```
+
+Downgrade to a specific revision:
+
+```bash
+cd backend
+.venv/bin/alembic downgrade a1e6b0d62f0c
+```
+
+Rollback all migrations (dangerous!):
+
+```bash
+cd backend
+.venv/bin/alembic downgrade base
+```
+
+<Warning>
+  Rolling back to `base` will drop all tables. Only use this in development or when explicitly recreating the database.
+</Warning>
+
+### Check Current Schema Version
+
+```bash
+cd backend
+.venv/bin/alembic current
+```
+
+Output:
+```
+b4338be78eec (head)
+```
+
+### View Migration History
+
+```bash
+cd backend
+.venv/bin/alembic history --verbose
+```
+
+## Automatic Migrations on Startup
+
+The `DB_AUTO_MIGRATE` environment variable controls whether migrations run automatically when the backend starts:
+
+```bash
+# Enable auto-migration (useful in dev)
+DB_AUTO_MIGRATE=true
+
+# Disable auto-migration (recommended in production)
+DB_AUTO_MIGRATE=false
+```
+
+**Default behavior**:
+- `ENVIRONMENT=dev`: `DB_AUTO_MIGRATE` defaults to `true`
+- All other environments: `DB_AUTO_MIGRATE` defaults to `false`
+
+**Production recommendation**: Set `DB_AUTO_MIGRATE=false` and run migrations manually before deploying new code.
+
+## Creating New Migrations
+
+### Auto-Generate from Schema Changes
+
+When you modify SQLModel models in `backend/app/models/`, generate a migration:
+
+```bash
+cd backend
+.venv/bin/alembic revision --autogenerate -m "add user email field"
+```
+
+Alembic will:
+1. Compare current database schema with SQLModel definitions
+2. Generate a migration script in `migrations/versions/`
+3. Detect added/removed tables, columns, indexes, and constraints
+
+**Example output**:
+```
+INFO  [alembic.autogenerate.compare] Detected added column 'users.email'
+Generating /path/to/backend/migrations/versions/abc123def456_add_user_email_field.py ... done
+```
+
+### Manual Migration
+
+Create an empty migration template:
+
+```bash
+cd backend
+.venv/bin/alembic revision -m "custom data migration"
+```
+
+Edit the generated file in `migrations/versions/` to add custom logic:
+
+```python
+def upgrade() -> None:
+    # Custom upgrade logic
+    op.execute("""
+        UPDATE tasks SET status = 'pending' WHERE status IS NULL
+    """)
+
+def downgrade() -> None:
+    # Custom downgrade logic
+    pass
+```
+
+### Review Generated Migrations
+
+Always review auto-generated migrations before applying:
+
+```python
+def upgrade() -> None:
+    # ### commands auto generated by Alembic ###
+    op.add_column('users', sa.Column('email', sa.String(), nullable=True))
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+    # ### end Alembic commands ###
+
+def downgrade() -> None:
+    # ### commands auto generated by Alembic ###
+    op.drop_index(op.f('ix_users_email'), table_name='users')
+    op.drop_column('users', 'email')
+    # ### end Alembic commands ###
+```
+
+**Check for**:
+- Unintended schema changes
+- Missing `NOT NULL` constraints
+- Reversibility of `downgrade()` function
+- Data migrations that need custom logic
+
+## Migration Validation (CI)
+
+The Makefile includes a comprehensive migration validation target:
+
+```bash
+make backend-migration-check
+```
+
+This target:
+
+1. **Validates migration graph**: Checks for cycles and orphaned revisions using `scripts/check_migration_graph.py`
+2. **Tests upgrade path**: Spins up a temporary PostgreSQL container and applies all migrations
+3. **Tests downgrade path**: Rolls back all migrations to `base`
+4. **Tests re-upgrade**: Applies all migrations again to verify idempotency
+
+**Example CI workflow** (from `.github/workflows/ci.yml`):
+
+```yaml
+- name: Validate database migrations
+  run: make backend-migration-check
+```
+
+### Local Migration Testing
+
+Test migrations against a clean database:
+
+```bash
+# Start a temporary Postgres container
+docker run -d --rm --name mc-test-db \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=migration_test \
+  -p 55432:5432 \
+  postgres:16
+
+# Wait for database to be ready
+sleep 5
+
+# Run migrations
+cd backend
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/migration_test \
+  .venv/bin/alembic upgrade head
+
+# Test downgrade
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/migration_test \
+  .venv/bin/alembic downgrade base
+
+# Clean up
+docker rm -f mc-test-db
+```
+
+## Common Migration Operations
+
+### Add a Column
+
+```python
+def upgrade() -> None:
+    op.add_column('tasks', sa.Column('priority', sa.Integer(), nullable=True))
+
+def downgrade() -> None:
+    op.drop_column('tasks', 'priority')
+```
+
+### Add an Index
+
+```python
+def upgrade() -> None:
+    op.create_index('ix_tasks_status', 'tasks', ['status'])
+
+def downgrade() -> None:
+    op.drop_index('ix_tasks_status', table_name='tasks')
+```
+
+### Add a Composite Index
+
+```python
+def upgrade() -> None:
+    op.create_index(
+        'ix_tasks_board_status',
+        'tasks',
+        ['board_id', 'status'],
+        unique=False
+    )
+
+def downgrade() -> None:
+    op.drop_index('ix_tasks_board_status', table_name='tasks')
+```
+
+### Rename a Column
+
+```python
+def upgrade() -> None:
+    op.alter_column('tasks', 'old_name', new_column_name='new_name')
+
+def downgrade() -> None:
+    op.alter_column('tasks', 'new_name', new_column_name='old_name')
+```
+
+### Data Migration
+
+```python
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade() -> None:
+    # Add new column
+    op.add_column('tasks', sa.Column('assignee_id', sa.String(), nullable=True))
+    
+    # Migrate data
+    connection = op.get_bind()
+    connection.execute(
+        sa.text("""
+            UPDATE tasks
+            SET assignee_id = (SELECT user_id FROM assignments WHERE assignments.task_id = tasks.id LIMIT 1)
+        """)
+    )
+
+def downgrade() -> None:
+    op.drop_column('tasks', 'assignee_id')
+```
+
+### Drop a Table (with Safety Check)
+
+```python
+def upgrade() -> None:
+    # Check if table is empty before dropping
+    connection = op.get_bind()
+    result = connection.execute(sa.text("SELECT COUNT(*) FROM deprecated_table"))
+    if result.scalar() > 0:
+        raise Exception("Cannot drop deprecated_table: contains data")
+    
+    op.drop_table('deprecated_table')
+
+def downgrade() -> None:
+    # Recreate table structure
+    op.create_table(
+        'deprecated_table',
+        sa.Column('id', sa.Integer(), primary_key=True),
+        sa.Column('name', sa.String(), nullable=False)
+    )
+```
+
+## Production Deployment Workflow
+
+### Pre-Deployment Migration
+
+1. **Review pending migrations**:
+   ```bash
+   cd backend
+   .venv/bin/alembic history
+   ```
+
+2. **Backup database**:
+   ```bash
+   pg_dump -U postgres mission_control > backup_$(date +%Y%m%d_%H%M%S).sql
+   ```
+
+3. **Apply migrations**:
+   ```bash
+   .venv/bin/alembic upgrade head
+   ```
+
+4. **Verify migration**:
+   ```bash
+   .venv/bin/alembic current
+   psql -U postgres mission_control -c "\dt"  # List tables
+   ```
+
+5. **Deploy application code**:
+   ```bash
+   systemctl --user restart mission-control-backend
+   ```
+
+### Zero-Downtime Migrations
+
+For large tables or production systems:
+
+1. **Make schema changes backward-compatible**:
+   - Add nullable columns first, populate them, then add `NOT NULL` constraint
+   - Create new tables/indexes before dropping old ones
+
+2. **Use separate migration steps**:
+   ```bash
+   # Step 1: Add new column (nullable)
+   alembic revision --autogenerate -m "add email column nullable"
+   alembic upgrade head
+   
+   # Step 2: Backfill data
+   alembic revision -m "backfill email data"
+   # Edit migration to populate email field
+   alembic upgrade head
+   
+   # Step 3: Add NOT NULL constraint
+   alembic revision --autogenerate -m "make email not null"
+   alembic upgrade head
+   ```
+
+3. **Test in staging** before applying to production
+
+## Troubleshooting
+
+### Migration Failed Mid-Execution
+
+Alembic may leave the database in an inconsistent state. Check the `alembic_version` table:
+
+```sql
+SELECT * FROM alembic_version;
+```
+
+If the version is incorrect:
+
+```bash
+# Manually set version (use with caution)
+cd backend
+.venv/bin/alembic stamp <correct_revision_id>
+```
+
+### Migration Conflicts After Merge
+
+If two branches created migrations in parallel, you may have multiple heads:
+
+```bash
+cd backend
+.venv/bin/alembic heads
+```
+
+Merge the heads:
+
+```bash
+.venv/bin/alembic merge <revision1> <revision2> -m "merge migration branches"
+```
+
+### "Can't locate revision identified by 'xxxxx'"
+
+The migration file is missing from `migrations/versions/`. Either:
+
+1. The migration was deleted (restore from git)
+2. You're on the wrong branch (switch to correct branch)
+3. Your working directory is wrong (use `cd backend`)
+
+### Database URL Not Found
+
+Ensure `DATABASE_URL` is set in `backend/.env`:
+
+```bash
+grep DATABASE_URL backend/.env
+```
+
+Or set it temporarily:
+
+```bash
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/mission_control \
+  .venv/bin/alembic upgrade head
+```
+
+### Rollback Data Loss
+
+Downgrade operations may lose data. Always:
+
+1. Backup before downgrading
+2. Review `downgrade()` logic in migration files
+3. Test rollback in staging before production
+
+## Best Practices
+
+1. **Always review auto-generated migrations** before committing
+2. **Test migrations locally** before pushing to production
+3. **Backup production database** before applying migrations
+4. **Keep migrations reversible** when possible
+5. **Use descriptive migration messages**: `"add user email field"` not `"update schema"`
+6. **Avoid editing applied migrations**: Create a new migration instead
+7. **Run `make backend-migration-check`** in CI to catch migration issues early
+8. **Coordinate with team** when creating migrations to avoid conflicts
+
+## Reference
+
+- **Alembic documentation**: https://alembic.sqlalchemy.org/
+- **SQLModel documentation**: https://sqlmodel.tiangolo.com/
+- **Migration history**: `backend/migrations/versions/`
+- **Environment configuration**: `backend/migrations/env.py`
+- **Settings class**: `backend/app/core/config.py`
+
+## Next Steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Deploy with Docker Compose](/deployment/docker)
+- [Deploy with systemd](/deployment/systemd)

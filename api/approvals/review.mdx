@@ -1,0 +1,199 @@
+---
+title: Review Approval
+api: PATCH /api/boards/{board_id}/approvals/{approval_id}
+---
+
+Update an approval's status to approve or reject a pending action.
+
+## Authentication
+
+Requires user authentication with write access to the board.
+
+## Path Parameters
+
+<ParamField path="board_id" type="string" required>
+  UUID of the board
+</ParamField>
+
+<ParamField path="approval_id" type="string" required>
+  UUID of the approval to update
+</ParamField>
+
+## Request Body
+
+<ParamField body="status" type="string" required>
+  New status: `pending`, `approved`, or `rejected`
+</ParamField>
+
+## Response
+
+Returns the updated approval object.
+
+<ResponseField name="id" type="string">
+  Approval UUID
+</ResponseField>
+
+<ResponseField name="board_id" type="string">
+  Board UUID
+</ResponseField>
+
+<ResponseField name="action_type" type="string">
+  Type of action
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Updated status: `pending`, `approved`, or `rejected`
+</ResponseField>
+
+<ResponseField name="confidence" type="number">
+  Confidence score (0-100)
+</ResponseField>
+
+<ResponseField name="task_id" type="string" optional>
+  Primary task UUID
+</ResponseField>
+
+<ResponseField name="task_ids" type="array">
+  Array of associated task UUIDs
+</ResponseField>
+
+<ResponseField name="task_titles" type="array">
+  Array of task titles
+</ResponseField>
+
+<ResponseField name="agent_id" type="string" optional>
+  Agent UUID
+</ResponseField>
+
+<ResponseField name="payload" type="object" optional>
+  Action payload
+</ResponseField>
+
+<ResponseField name="rubric_scores" type="object" optional>
+  Rubric scores
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp when created
+</ResponseField>
+
+<ResponseField name="resolved_at" type="string">
+  ISO 8601 timestamp when status changed to approved/rejected
+</ResponseField>
+
+## Example Request - Approve
+
+```bash
+curl -X PATCH "https://api.openclaw.ai/api/boards/550e8400-e29b-41d4-a716-446655440000/approvals/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "approved"
+  }'
+```
+
+## Example Request - Reject
+
+```bash
+curl -X PATCH "https://api.openclaw.ai/api/boards/550e8400-e29b-41d4-a716-446655440000/approvals/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "rejected"
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "board_id": "550e8400-e29b-41d4-a716-446655440000",
+  "action_type": "tool_use",
+  "status": "approved",
+  "confidence": 85.5,
+  "task_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "task_ids": ["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+  "task_titles": ["Deploy backend service"],
+  "agent_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "payload": {
+    "tool_name": "shell",
+    "command": "kubectl apply -f deployment.yaml",
+    "reason": "Need to deploy production changes with kubectl"
+  },
+  "rubric_scores": {
+    "safety": 90,
+    "necessity": 85
+  },
+  "created_at": "2026-03-05T10:30:00Z",
+  "resolved_at": "2026-03-05T10:35:00Z"
+}
+```
+
+## Behavior
+
+### Approval Resolution
+
+When an approval is approved or rejected:
+
+1. The `resolved_at` timestamp is set to the current time
+2. The status changes to `approved` or `rejected`
+3. The board lead agent receives a notification via the OpenClaw gateway
+
+### Lead Notification Message
+
+The board lead receives a message with the following format:
+
+```
+APPROVAL RESOLVED
+Board: Production Board
+Approval ID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+Action: tool_use
+Decision: approved
+Confidence: 85.5
+Task ID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+
+Take action: continue execution using the final approval decision.
+```
+
+### Reverting to Pending
+
+You can change an approval back to `pending` status. When reverting from `approved` or `rejected` to `pending`:
+
+- The system validates that no other pending approval exists for the same tasks
+- If conflicts exist, a 409 Conflict error is returned
+
+## Error Responses
+
+### 404 Not Found
+
+```json
+{
+  "detail": "Approval not found"
+}
+```
+
+### 409 Conflict
+
+Returned when trying to set status to `pending` but another pending approval exists for the same task.
+
+```json
+{
+  "detail": {
+    "message": "Each task can have only one pending approval.",
+    "conflicts": [
+      {
+        "task_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "approval_id": "other-approval-id"
+      }
+    ]
+  }
+}
+```
+
+## Activity Log
+
+Approval resolution events are logged to the activity feed:
+
+- `approval.lead_notified`: Lead was successfully notified
+- `approval.lead_notify_failed`: Notification to lead failed

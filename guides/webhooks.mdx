@@ -1,0 +1,541 @@
+---
+title: Webhooks
+description: Receive external events and notify agents
+---
+
+# Webhooks
+
+Webhooks enable boards to receive events from external systems. Incoming payloads are stored, written to board memory, and agents are notified.
+
+## Webhook Workflow
+
+<Steps>
+  <Step title="Create webhook">
+    Configure a webhook endpoint for your board:
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/boards/<board-id>/webhooks \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "description": "GitHub push events - create task for each new commit",
+        "enabled": true,
+        "agent_id": "<agent-id>"
+      }'
+    ```
+  </Step>
+  
+  <Step title="Get endpoint URL">
+    Response includes the webhook URL:
+    ```json
+    {
+      "id": "<webhook-id>",
+      "board_id": "<board-id>",
+      "agent_id": "<agent-id>",
+      "description": "GitHub push events",
+      "enabled": true,
+      "endpoint_path": "/api/v1/boards/<board-id>/webhooks/<webhook-id>",
+      "endpoint_url": "http://72.62.201.147:8000/api/v1/boards/<board-id>/webhooks/<webhook-id>"
+    }
+    ```
+  </Step>
+  
+  <Step title="Configure external service">
+    Add the webhook URL to your external service (GitHub, Stripe, etc.):
+    - **GitHub:** Repository → Settings → Webhooks → Add webhook
+    - **Stripe:** Developers → Webhooks → Add endpoint
+    - **Custom:** Send POST requests to the endpoint
+  </Step>
+  
+  <Step title="Receive events">
+    When an event occurs, Mission Control:
+    1. Validates webhook is enabled
+    2. Captures payload and headers
+    3. Stores in `board_webhook_payloads` table
+    4. Writes to board memory with tags
+    5. Notifies target agent (or board lead)
+  </Step>
+</Steps>
+
+**Source:** `backend/app/api/board_webhooks.py`
+
+## Create Webhook
+
+```bash
+curl -X POST http://localhost:8000/api/v1/boards/<board-id>/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Process new customer signups from Stripe",
+    "enabled": true,
+    "agent_id": "<agent-id>"
+  }'
+```
+
+**Fields:**
+- `description` - Instructions for the agent on how to handle events
+- `enabled` - Whether webhook accepts events (default: `true`)
+- `agent_id` - Specific agent to notify (optional, defaults to board lead)
+
+**Response:**
+```json
+{
+  "id": "a7f3c2e1-...",
+  "board_id": "70a4ea4f-...",
+  "agent_id": "c91361ef-...",
+  "description": "Process new customer signups from Stripe",
+  "enabled": true,
+  "endpoint_path": "/api/v1/boards/70a4ea4f-.../webhooks/a7f3c2e1-...",
+  "endpoint_url": "http://72.62.201.147:8000/api/v1/boards/70a4ea4f-.../webhooks/a7f3c2e1-...",
+  "created_at": "2026-03-05T12:00:00",
+  "updated_at": "2026-03-05T12:00:00"
+}
+```
+
+**Source:** `backend/app/api/board_webhooks.py:289-308`
+
+## Webhook Endpoint
+
+The webhook endpoint is publicly accessible (no authentication required):
+
+```
+POST /api/v1/boards/<board-id>/webhooks/<webhook-id>
+```
+
+### Example Request
+
+**GitHub push event:**
+```bash
+curl -X POST http://72.62.201.147:8000/api/v1/boards/70a4ea4f-.../webhooks/a7f3c2e1-... \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: push" \
+  -H "X-GitHub-Delivery: 12345-67890" \
+  -d '{
+    "ref": "refs/heads/main",
+    "commits": [
+      {
+        "id": "a3f4b2c",
+        "message": "Fix memory leak in worker process",
+        "author": {"name": "Jane Doe", "email": "jane@example.com"},
+        "timestamp": "2026-03-05T12:00:00Z"
+      }
+    ]
+  }'
+```
+
+**Response:**
+```json
+{
+  "board_id": "70a4ea4f-...",
+  "webhook_id": "a7f3c2e1-...",
+  "payload_id": "b9d2e5f8-..."
+}
+```
+
+**Status code:** `202 Accepted` (processing asynchronously)
+
+**Source:** `backend/app/api/board_webhooks.py:425-525`
+
+## Payload Processing
+
+When a webhook receives a payload:
+
+### 1. Validation
+
+```python
+if not webhook.enabled:
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Webhook is disabled.",
+    )
+```
+
+### 2. Payload Decoding
+
+Supports JSON and plaintext:
+
+```python
+def _decode_payload(
+    raw_body: bytes,
+    *,
+    content_type: str | None,
+) -> dict[str, object] | list[object] | str | int | float | bool | None:
+    # Try JSON parsing if Content-Type suggests JSON or body looks like JSON
+    # Fall back to plaintext string
+```
+
+**Source:** `backend/app/api/board_webhooks.py:139-160`
+
+### 3. Storage
+
+Stored in `board_webhook_payloads`:
+
+```python
+payload = BoardWebhookPayload(
+    board_id=board.id,
+    webhook_id=webhook.id,
+    payload=payload_value,  # JSON or string
+    headers=captured_headers,  # Content-Type, User-Agent, X-*
+    source_ip=request.client.host,
+    content_type=content_type,
+)
+session.add(payload)
+```
+
+### 4. Board Memory
+
+Creates a memory entry:
+
+```python
+memory = BoardMemory(
+    board_id=board.id,
+    content=_webhook_memory_content(webhook=webhook, payload=payload),
+    tags=[
+        "webhook",
+        f"webhook:{webhook.id}",
+        f"payload:{payload.id}",
+    ],
+    source="webhook",
+    is_chat=False,
+)
+```
+
+**Memory content format:**
+```
+WEBHOOK PAYLOAD RECEIVED
+Webhook ID: a7f3c2e1-...
+Payload ID: b9d2e5f8-...
+Instruction: Process new customer signups from Stripe
+Inspect (admin API): /api/v1/boards/.../webhooks/.../payloads/...
+
+Payload preview:
+{
+  "type": "customer.subscription.created",
+  "data": {...}
+}
+```
+
+**Source:** `backend/app/api/board_webhooks.py:185-200`
+
+### 5. Agent Notification
+
+Target agent (or board lead) receives a message:
+
+```
+WEBHOOK EVENT RECEIVED
+Board: Customer Success
+Webhook ID: a7f3c2e1-...
+Payload ID: b9d2e5f8-...
+Instruction: Process new customer signups from Stripe
+
+Take action:
+1) Triage this payload against the webhook instruction.
+2) Create/update tasks as needed.
+3) Reference payload ID b9d2e5f8-... in task descriptions.
+
+Payload preview:
+{...}
+
+To inspect board memory entries:
+GET /api/v1/agent/boards/<board-id>/memory?is_chat=false
+```
+
+**Source:** `backend/app/api/board_webhooks.py:202-251`
+
+## List Webhooks
+
+```bash
+GET /api/v1/boards/<board-id>/webhooks
+```
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "a7f3c2e1-...",
+      "board_id": "70a4ea4f-...",
+      "agent_id": "c91361ef-...",
+      "description": "GitHub push events",
+      "enabled": true,
+      "endpoint_path": "/api/v1/boards/.../webhooks/...",
+      "endpoint_url": "http://72.62.201.147:8000/...",
+      "created_at": "2026-03-05T12:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/board_webhooks.py:270-286`
+
+## Update Webhook
+
+Change description, enabled state, or target agent:
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/boards/<board-id>/webhooks/<webhook-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Updated: Create task for each commit, assign to DevOps",
+    "enabled": false,
+    "agent_id": "<different-agent-id>"
+  }'
+```
+
+**Disabling webhooks:**
+Set `enabled: false` to stop accepting events. Existing payloads remain accessible.
+
+**Source:** `backend/app/api/board_webhooks.py:326-349`
+
+## Delete Webhook
+
+<Warning>
+Deleting a webhook removes all stored payloads.
+</Warning>
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/boards/<board-id>/webhooks/<webhook-id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Cascades to:
+- All webhook payloads
+- Related board memory entries (if cleanup enabled)
+
+**Source:** `backend/app/api/board_webhooks.py:352-372`
+
+## View Payloads
+
+### List Payloads
+
+```bash
+GET /api/v1/boards/<board-id>/webhooks/<webhook-id>/payloads
+```
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "b9d2e5f8-...",
+      "board_id": "70a4ea4f-...",
+      "webhook_id": "a7f3c2e1-...",
+      "payload": {
+        "ref": "refs/heads/main",
+        "commits": [...]
+      },
+      "headers": {
+        "content-type": "application/json",
+        "x-github-event": "push",
+        "user-agent": "GitHub-Hookshot/abc123"
+      },
+      "source_ip": "192.30.252.1",
+      "content_type": "application/json",
+      "received_at": "2026-03-05T12:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Source:** `backend/app/api/board_webhooks.py:375-400`
+
+### Get Single Payload
+
+```bash
+GET /api/v1/boards/<board-id>/webhooks/<webhook-id>/payloads/<payload-id>
+```
+
+Returns full payload details including complete JSON/string body.
+
+**Source:** `backend/app/api/board_webhooks.py:403-422`
+
+## Captured Headers
+
+These headers are automatically captured:
+
+- `Content-Type`
+- `User-Agent`
+- All headers starting with `X-` (e.g., `X-GitHub-Event`, `X-Stripe-Signature`)
+
+**Source:** `backend/app/api/board_webhooks.py:163-169`
+
+## Webhook Security
+
+### UUID-Based URLs
+
+Webhook URLs include a UUID that's hard to guess:
+```
+/api/v1/boards/70a4ea4f-5b2d-4f3e-9a1c-8d7e6f4a2b1c/webhooks/a7f3c2e1-4d8f-4a2b-9c5d-3e7f8a1b2c4d
+```
+
+### IP Allowlisting
+
+Filter by source IP:
+
+```python
+allowed_ips = ["192.30.252.0/24"]  # GitHub IPs
+if request.client.host not in allowed_ips:
+    raise HTTPException(status_code=403)
+```
+
+**Implementation:** Add to webhook model or board configuration.
+
+### Signature Verification
+
+For services that send signatures (GitHub, Stripe):
+
+**GitHub example:**
+```python
+import hmac
+import hashlib
+
+def verify_github_signature(payload: bytes, signature: str, secret: str) -> bool:
+    expected = 'sha256=' + hmac.new(
+        secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+# In webhook handler:
+signature = request.headers.get('X-Hub-Signature-256')
+if not verify_github_signature(await request.body(), signature, webhook_secret):
+    raise HTTPException(status_code=403)
+```
+
+**Implementation:** Add `secret` field to webhook model.
+
+## Async Processing
+
+Webhook delivery to agents uses Redis Queue (RQ):
+
+```python
+enqueued = enqueue_webhook_delivery(
+    QueuedInboundDelivery(
+        board_id=board.id,
+        webhook_id=webhook.id,
+        payload_id=payload.id,
+        received_at=payload.received_at,
+    ),
+)
+```
+
+**Benefits:**
+- Immediate 202 response to external service
+- Retry logic for failed notifications
+- Doesn't block webhook ingestion
+
+**Source:** `backend/app/api/board_webhooks.py:495-519`, `backend/app/services/webhooks/queue.py`
+
+## Common Integration Examples
+
+### GitHub Push Events
+
+**Webhook description:**
+```
+Create a task for each commit pushed to main branch.
+Task title: "Review commit: <commit_message>"
+Assign to code review agent.
+```
+
+**Agent action:**
+1. Parse `commits` array from payload
+2. For each commit:
+   - Create task with commit message
+   - Add commit SHA and author to task description
+   - Link to GitHub commit URL
+
+### Stripe Payment Events
+
+**Webhook description:**
+```
+When customer.subscription.created:
+- Create onboarding task for new customer
+- Notify sales agent
+- Update CRM
+```
+
+**Agent action:**
+1. Check `type` field in payload
+2. Extract customer email and plan details
+3. Create task: "Onboard new customer: {email}"
+4. Post to board memory with customer context
+
+### Custom API Webhooks
+
+**Webhook description:**
+```
+Monitoring alert received.
+If severity=critical:
+- Create urgent task
+- Notify on-call agent immediately
+Else:
+- Log to board memory for review
+```
+
+**Agent action:**
+1. Parse `severity` from payload
+2. If critical, create high-priority task
+3. Otherwise, just acknowledge in memory
+
+## Database Schema
+
+```sql
+CREATE TABLE board_webhooks (
+    id UUID PRIMARY KEY,
+    board_id UUID REFERENCES boards(id),
+    agent_id UUID REFERENCES agents(id) NULL,
+    description TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+CREATE TABLE board_webhook_payloads (
+    id UUID PRIMARY KEY,
+    board_id UUID REFERENCES boards(id),
+    webhook_id UUID REFERENCES board_webhooks(id),
+    payload JSONB,
+    headers JSONB,
+    source_ip TEXT,
+    content_type TEXT,
+    received_at TIMESTAMP
+);
+```
+
+**Source:** `backend/app/models/board_webhooks.py`, `backend/app/models/board_webhook_payloads.py`
+
+## Best Practices
+
+### For Webhook Configuration
+
+1. **Clear descriptions:** Write detailed instructions for agents
+2. **Target specific agents:** Use `agent_id` for specialized handlers
+3. **Disable when not needed:** Set `enabled: false` to pause
+4. **Monitor payload history:** Review stored payloads regularly
+
+### For Agent Handlers
+
+1. **Validate payload structure:** Check for expected fields
+2. **Handle errors gracefully:** Don't crash on unexpected data
+3. **Reference payload IDs:** Include in task descriptions for traceability
+4. **Query board memory:** Check for previous related events
+
+### For External Services
+
+1. **Test with sample payloads:** Send test events first
+2. **Configure retry logic:** Most services retry failed webhooks
+3. **Monitor delivery:** Check service's webhook logs for failures
+4. **Verify signatures:** Implement signature verification for security
+
+## See Also
+
+- [Memory Management](/guides/memory-management)
+- [Managing Boards](/guides/managing-boards)
+- [Agent Provisioning](/guides/agent-provisioning)

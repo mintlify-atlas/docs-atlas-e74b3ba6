@@ -1,0 +1,64 @@
+---
+title: 'List Organizations'
+description: 'Retrieve all organizations where the current user is a member'
+---
+
+## GET /organizations/me/list
+
+Returns a list of all organizations where the authenticated user is a member, including their role and active status.
+
+### Authentication
+
+Requires authentication. The endpoint uses the current user's session to determine membership.
+
+### Response
+
+Returns an array of organization list items.
+
+<ResponseField name="id" type="string (UUID)" required>
+  Unique identifier for the organization
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Name of the organization
+</ResponseField>
+
+<ResponseField name="role" type="string" required>
+  User's role in the organization. Possible values: `owner`, `admin`, `member`
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean" required>
+  Whether this is the user's currently active organization
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.com/organizations/me/list" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Example Response
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Acme Corp",
+    "role": "owner",
+    "is_active": true
+  },
+  {
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "Beta Industries",
+    "role": "member",
+    "is_active": false
+  }
+]
+```
+
+### Notes
+
+- Organizations are returned sorted alphabetically by name (case-insensitive)
+- Only organizations where the user has an active membership are included
+- The endpoint also refreshes and validates the user's active membership status

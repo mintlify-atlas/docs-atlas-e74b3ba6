@@ -1,0 +1,152 @@
+---
+title: "Provision Agent"
+api: "POST /api/v1/agents"
+description: "Create and provision a new agent on the gateway"
+---
+
+Creates a new agent record in Mission Control and provisions it on the associated gateway. The agent will be assigned a unique workspace and receive its configuration files (TOOLS.md, IDENTITY.md, etc.).
+
+## Authentication
+
+Requires admin or agent authentication via `Authorization: Bearer <token>` header.
+
+## Request Body
+
+<ParamField body="name" type="string" required>
+  Human-readable agent display name (e.g., "Ops triage lead")
+</ParamField>
+
+<ParamField body="board_id" type="UUID" optional>
+  Board ID to scope this agent. Omit only when creating gateway-level agents (requires special permissions)
+</ParamField>
+
+<ParamField body="status" type="string" default="provisioning">
+  Initial lifecycle state: `provisioning`, `active`, `paused`, `retired`
+</ParamField>
+
+<ParamField body="heartbeat_config" type="object" optional>
+  Runtime heartbeat behavior overrides
+  ```json
+  {
+    "interval_seconds": 30,
+    "missing_tolerance": 120
+  }
+  ```
+</ParamField>
+
+<ParamField body="identity_profile" type="object" optional>
+  Profile hints used by routing and policy checks
+  ```json
+  {
+    "role": "incident_lead",
+    "skill": "triage"
+  }
+  ```
+</ParamField>
+
+<ParamField body="identity_template" type="string" optional>
+  Template that defines initial intent and behavior
+  
+  Example: "You are a senior incident response lead."
+</ParamField>
+
+<ParamField body="soul_template" type="string" optional>
+  Template representing deeper agent instructions
+  
+  Example: "When critical blockers appear, escalate in plain language."
+</ParamField>
+
+## Response
+
+Returns an `AgentRead` object with the same structure as [List Agents](/api/agents/list).
+
+## Provisioning Workflow
+
+When you create an agent, Mission Control:
+
+1. **Validates** board access and capacity limits
+2. **Creates** an agent record with status `provisioning`
+3. **Generates** a unique agent key: `mc-<uuid>`
+4. **Calculates** workspace path: `{gateway.workspace_root}/workspace-{agent_key}/`
+5. **Calls** gateway RPC: `agents.create(mc-<uuid>)`
+6. **Writes** configuration files via `agents.files.set()`:
+   - `TOOLS.md` - API credentials and endpoints
+   - `IDENTITY.md` - Agent role and behavior (if `identity_template` provided)
+   - `SOUL.md` - Deeper instructions (if `soul_template` provided)
+7. **Updates** status to `ready`
+
+## Agent IDs and Session IDs
+
+Mission Control agents use a specific ID format:
+
+- **Agent Key**: `mc-<uuid>` (e.g., `mc-c91361ef-6d85-439c-82e1-8f388a302e6a`)
+- **Session ID**: `agent:mc-<uuid>:main` (stored in `openclaw_session_id`)
+- **Workspace Path**: `{workspace_root}/workspace-mc-<uuid>/`
+
+These are distinct from manually configured agents in `openclaw.json` (e.g., `cfo`, `architect`).
+
+## Example Request
+
+```bash
+curl -X POST "https://api.example.com/api/v1/agents" \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Financial Operations Lead",
+    "board_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "active",
+    "identity_profile": {
+      "role": "cfo",
+      "specialty": "budget_planning"
+    },
+    "identity_template": "You are a CFO agent responsible for financial planning and analysis."
+  }'
+```
+
+## Example Response
+
+```json
+{
+  "id": "c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "gateway_id": "55cc268a-4b45-400f-accf-201e025232ac",
+  "board_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Financial Operations Lead",
+  "status": "ready",
+  "gateway_agent_id": "agent-01JCXYZ123",
+  "workspace_path": "/home/ubuntu/.openclaw/workspace-mc-c91361ef-6d85-439c-82e1-8f388a302e6a",
+  "is_mc_agent": true,
+  "is_board_lead": false,
+  "is_gateway_main": false,
+  "openclaw_session_id": "agent:mc-c91361ef-6d85-439c-82e1-8f388a302e6a:main",
+  "created_at": "2026-03-05T10:30:00Z",
+  "updated_at": "2026-03-05T10:30:00Z",
+  "identity_profile": {
+    "role": "cfo",
+    "specialty": "budget_planning"
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="403 Forbidden">
+  Insufficient permissions or board capacity exceeded
+</ResponseField>
+
+<ResponseField name="404 Not Found">
+  Board ID does not exist or is not accessible
+</ResponseField>
+
+<ResponseField name="422 Unprocessable Entity">
+  Validation failed (e.g., name is empty or too long)
+</ResponseField>
+
+<ResponseField name="502 Bad Gateway">
+  Gateway RPC call failed (gateway unreachable or authentication failed)
+</ResponseField>
+
+## Notes
+
+- Agent tokens are automatically generated during provisioning and stored in `TOOLS.md`
+- The agent must be able to read `TOOLS.md` from its workspace to authenticate with Mission Control
+- If the gateway entry is missing from `openclaw.json`, sync will fail (use [Template Sync](/api/gateways/templates) with `rotate_tokens=true`)

@@ -1,0 +1,405 @@
+---
+title: Template Sync
+description: Template synchronization workflow for OpenClaw agents with all parameters
+---
+
+## Overview
+
+Template sync is the process of synchronizing agent workspace files (TOOLS.md, SOUL.md, IDENTITY.md, etc.) from Mission Control to the OpenClaw gateway. This ensures agents have the latest configuration and credentials.
+
+**Primary Endpoint:** `POST /api/v1/gateways/{gateway_id}/templates/sync`
+
+**Implementation:** `backend/app/services/openclaw/admin_service.py:489-517`
+
+## When to Sync Templates
+
+Run template sync when:
+
+1. **First-time setup** — Initial gateway configuration
+2. **Agent credentials compromised** — Use `rotate_tokens=true`
+3. **Template updates** — After modifying SOUL.md, IDENTITY.md, or TOOLS.md templates
+4. **Agents deleted from gateway config** — Use `rotate_tokens=true` to recreate entries
+5. **Configuration drift** — Restore expected workspace state
+
+## Template Sync Parameters
+
+All parameters are passed as query strings.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_main` | Boolean | `true` | Include the gateway-main agent in sync |
+| `lead_only` | Boolean | `false` | Sync only board lead agents (skip workers) |
+| `reset_sessions` | Boolean | `false` | Force reset of agent sessions |
+| `rotate_tokens` | Boolean | `false` | Generate new authentication tokens for all agents |
+| `force_bootstrap` | Boolean | `false` | Force re-creation of BOOTSTRAP.md |
+| `overwrite` | Boolean | `false` | Overwrite existing workspace files |
+| `board_id` | UUID | `null` | Limit sync to agents on a specific board |
+
+**Source:** `backend/app/services/openclaw/session_service.py` (GatewayTemplateSyncQuery)
+
+## Sync Workflow
+
+The template sync process executes the following steps:
+
+### 1. Ensure Gateway-Main Agent Exists
+
+**Implementation:** `backend/app/services/openclaw/admin_service.py:428-442`
+
+- Creates or updates the gateway-main agent record in the database
+- Ensures the gateway config contains the main agent entry
+- Provisions the main agent if missing or changed
+
+### 2. Collect Target Agents
+
+**Implementation:** `backend/app/services/openclaw/provisioning_db.py`
+
+Filters agents based on parameters:
+- If `board_id` is specified, only agents on that board
+- If `lead_only=true`, only `is_board_lead=true` agents
+- If `include_main=false`, exclude gateway-main agent
+
+### 3. Read Existing Tokens
+
+**Implementation:** `backend/app/services/openclaw/provisioning.py:550-560`
+
+For each agent:
+1. Attempt to read the existing `TOOLS.md` via `agents.files.get` RPC
+2. Extract `AUTH_TOKEN` from the file content
+3. If read fails and `rotate_tokens=false`, log error and skip agent
+
+**Error Message:**
+```
+unable to read AUTH_TOKEN from TOOLS.md (agent: {name}, run with rotate_tokens=true)
+```
+
+### 4. Render Templates
+
+**Implementation:** `backend/app/services/openclaw/provisioning.py:562-571`
+
+For each agent, render workspace files using Jinja2 templates:
+
+**Template Location:** `backend/templates/`
+
+**Board Lead Files:**
+- `TOOLS.md` (from `BOARD_TOOLS.md.j2`)
+- `SOUL.md` (from `BOARD_SOUL.md.j2`)
+- `IDENTITY.md` (from `BOARD_IDENTITY.md.j2`)
+- `HEARTBEAT.md` (from `BOARD_HEARTBEAT.md.j2`)
+- `AGENTS.md` (from `BOARD_AGENTS.md.j2`)
+- `ROLES.md` (from `BOARD_ROLES.md.j2`)
+- `BOOTSTRAP.md` (from template)
+- `USER.md` (from template)
+- `MEMORY.md` (from template)
+
+**Worker Agent Files:**
+- `TOOLS.md`
+- `SOUL.md`
+- `IDENTITY.md`
+- `HEARTBEAT.md`
+- `BOOTSTRAP.md`
+- `USER.md`
+- `MEMORY.md`
+
+**Gateway-Main Agent Files:**
+- `TOOLS.md` (from `GATEWAY_MAIN_TOOLS.md.j2`)
+- `SOUL.md` (from `GATEWAY_MAIN_SOUL.md.j2`)
+- `IDENTITY.md` (from template)
+- `USER.md` (from template)
+
+**Template Context Variables:**
+
+```python
+{
+  "agent_name": agent.name,
+  "agent_id": str(agent.id),
+  "board_id": str(board.id),
+  "board_name": board.name,
+  "board_objective": board.objective or "",
+  "is_board_lead": "true" | "false",
+  "session_key": agent.openclaw_session_id,
+  "workspace_path": f"{workspace_root}/workspace-{agent_key}",
+  "base_url": settings.base_url,
+  "auth_token": token,
+  "workspace_root": gateway.workspace_root,
+  "user_name": user.name,
+  "user_timezone": user.timezone,
+  # ... identity profile fields
+}
+```
+
+**Source:** `backend/app/services/openclaw/provisioning.py:306-351`
+
+### 5. Write Files to Gateway
+
+**Implementation:** `backend/app/services/openclaw/provisioning.py:573-574`
+
+For each file:
+1. Call `agents.files.set` RPC to write content to agent workspace
+2. Skip preserved files during updates unless `overwrite=true`
+
+**Preserved Files (not overwritten by default):**
+- `USER.md`
+- `MEMORY.md`
+- `LEARNINGS.md`
+
+**Source:** `backend/app/services/openclaw/constants.py` (PRESERVE_AGENT_EDITABLE_FILES)
+
+### 6. Update Agent Heartbeat Config
+
+**Implementation:** `backend/app/services/openclaw/provisioning.py:604-619`
+
+Patch the gateway's `openclaw.json` to update:
+- Agent workspace path
+- Heartbeat configuration (interval, triggers, notifications)
+
+Uses `config.patch` RPC to atomically update the config.
+
+### 7. Reset Sessions (Optional)
+
+**Implementation:** `backend/app/services/openclaw/provisioning.py:1097-1102`
+
+If `reset_sessions=true`:
+- Call `sessions.reset` RPC for each agent session key
+- Clears agent memory and restarts conversation
+
+## Command Examples
+
+### Standard Sync
+
+Sync all agents, preserving existing tokens:
+
+```bash
+GATEWAY_ID="55cc268a-4b45-400f-accf-201e025232ac"
+TOKEN="your-auth-token"
+BASE="http://localhost:8000"
+
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### First-Time Setup or Token Rotation
+
+Generate new tokens and overwrite all files:
+
+```bash
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true&overwrite=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**When to use:**
+- Initial gateway setup
+- Gateway config was manually edited and `mc-*` agents removed
+- Tokens were compromised or lost
+
+### Sync Only Lead Agents
+
+Update only board lead agents (useful for large deployments):
+
+```bash
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?lead_only=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Sync Specific Board
+
+Limit sync to agents on a single board:
+
+```bash
+BOARD_ID="board-uuid-here"
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?board_id=$BOARD_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Force Reset Sessions
+
+Reset agent memory and restart conversations:
+
+```bash
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?reset_sessions=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Exclude Gateway-Main Agent
+
+Sync only board agents:
+
+```bash
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?include_main=false" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Response Structure
+
+**Success Response:**
+
+```json
+{
+  "gateway_id": "gateway-uuid",
+  "synced_agents": [
+    {
+      "agent_id": "agent-uuid",
+      "name": "Agent Name",
+      "status": "success"
+    }
+  ],
+  "errors": [],
+  "total_synced": 5,
+  "total_errors": 0
+}
+```
+
+**Error Response:**
+
+```json
+{
+  "gateway_id": "gateway-uuid",
+  "synced_agents": [
+    {
+      "agent_id": "agent-uuid-1",
+      "name": "Agent 1",
+      "status": "success"
+    }
+  ],
+  "errors": [
+    {
+      "agent_id": "agent-uuid-2",
+      "agent_name": "Agent 2",
+      "error": "unable to read AUTH_TOKEN from TOOLS.md (run with rotate_tokens=true)"
+    }
+  ],
+  "total_synced": 1,
+  "total_errors": 1
+}
+```
+
+**Source:** `backend/app/schemas/gateways.py` (GatewayTemplatesSyncResult)
+
+## Common Errors
+
+### "unable to read AUTH_TOKEN from TOOLS.md"
+
+**Cause:** The agent entry doesn't exist in the gateway's `openclaw.json`, so the gateway cannot serve the `TOOLS.md` file.
+
+**Solution:**
+```bash
+curl -X POST "$BASE/api/v1/gateways/$GATEWAY_ID/templates/sync?rotate_tokens=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+This recreates agent entries in the gateway config and generates new tokens.
+
+### "missing scope: operator.read"
+
+**Cause:** Gateway authentication is not configured correctly.
+
+**Solution:** Ensure the gateway's `~/.openclaw/openclaw.json` contains:
+
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+
+Then restart the gateway.
+
+### "Gateway rejected required lead workspace files as unsupported"
+
+**Cause:** The gateway version doesn't support required lead workspace files (e.g., `AGENTS.md`, `ROLES.md`).
+
+**Solution:** Upgrade the gateway to version `2026.02.9` or later.
+
+**Version Check:** The minimum version is defined in `backend/.env` as `GATEWAY_MIN_VERSION=2026.02.9`.
+
+## Token Workflow
+
+### Token Generation
+
+**Implementation:** `backend/app/services/openclaw/db_agent_state.py` (mint_agent_token)
+
+1. Generate 32-byte random token using `secrets.token_urlsafe(32)`
+2. Hash token with `bcrypt` (cost factor 12)
+3. Store hash in `agents.agent_token_hash`
+4. Return raw token for template rendering
+
+### Token Storage
+
+Tokens are stored in two places:
+
+1. **Database:** Hashed in `agents.agent_token_hash` for authentication
+2. **Gateway Workspace:** Plain text in agent's `TOOLS.md` file
+
+**TOOLS.md Format:**
+```markdown
+# Mission Control API Authentication
+
+Authenticate all requests with the following token:
+
+AUTH_TOKEN="token-value-here"
+
+Use this token in the `X-Agent-Token` header:
+
+curl -H "X-Agent-Token: $AUTH_TOKEN" \
+  "$BASE_URL/api/v1/agent/boards"
+```
+
+## Template Development
+
+To modify templates:
+
+1. Edit files in `backend/templates/`
+2. Use Jinja2 syntax for variables: `{{ variable_name }}`
+3. Test template rendering locally
+4. Run template sync to deploy changes
+
+**Example Template:**
+
+```jinja2
+# {{ agent_name }}
+
+You are working on: {{ board_name }}
+
+Objective: {{ board_objective }}
+
+Your role: {{ identity_role }}
+```
+
+**Available Variables:** See "Template Context Variables" section above.
+
+## Automation
+
+For automated template sync (e.g., CI/CD):
+
+```bash
+#!/bin/bash
+set -e
+
+GATEWAY_ID="$1"
+TOKEN="$2"
+
+if [ -z "$GATEWAY_ID" ] || [ -z "$TOKEN" ]; then
+  echo "Usage: $0 <gateway-id> <token>"
+  exit 1
+fi
+
+echo "Syncing templates for gateway $GATEWAY_ID..."
+
+RESPONSE=$(curl -s -X POST \
+  "http://localhost:8000/api/v1/gateways/$GATEWAY_ID/templates/sync" \
+  -H "Authorization: Bearer $TOKEN")
+
+ERRORS=$(echo "$RESPONSE" | jq -r '.total_errors')
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "Template sync failed with $ERRORS errors:"
+  echo "$RESPONSE" | jq '.errors'
+  exit 1
+fi
+
+echo "Template sync completed successfully."
+echo "$RESPONSE" | jq '{total_synced, total_errors}'
+```

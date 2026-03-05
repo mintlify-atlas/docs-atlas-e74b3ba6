@@ -1,0 +1,597 @@
+---
+title: Installation
+description: Complete installation guide for OpenClaw Mission Control with multiple deployment options
+---
+
+Mission Control supports multiple installation methods to fit your infrastructure and workflow. Choose the method that best suits your needs.
+
+## Installation Methods
+
+<CardGroup cols={3}>
+  <Card title="One-Command Installer" icon="terminal" href="#one-command-installer">
+    Interactive script that handles everything
+  </Card>
+  <Card title="Docker Compose" icon="docker" href="#docker-compose-manual">
+    Manual Docker setup for full control
+  </Card>
+  <Card title="Systemd (Local)" icon="linux" href="#systemd-deployment">
+    Run services directly on Linux host
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+<Tabs>
+  <Tab title="Docker Mode">
+    - Docker Engine
+    - Docker Compose v2 (`docker compose`)
+    - 2GB+ RAM available
+    - Linux, macOS, or Windows with WSL2
+  </Tab>
+  <Tab title="Local Mode">
+    - Linux operating system
+    - Node.js >= 22
+    - Python 3.12
+    - uv (Python package manager)
+    - PostgreSQL 16+ (or Docker for DB only)
+    - Redis 7+ (optional for background jobs)
+    - 4GB+ RAM available
+  </Tab>
+</Tabs>
+
+---
+
+## One-Command Installer
+
+The installer is interactive and handles all dependencies, configuration, and startup.
+
+<Steps>
+  <Step title="Run the installer">
+    <CodeGroup>
+    ```bash Remote (no clone needed)
+    curl -fsSL https://raw.githubusercontent.com/abhi1693/openclaw-mission-control/master/install.sh | bash
+    ```
+
+    ```bash Local (after cloning)
+    git clone https://github.com/abhi1693/openclaw-mission-control.git
+    cd openclaw-mission-control
+    ./install.sh
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Follow the interactive prompts">
+    The installer will ask you to choose:
+
+    **Deployment mode:**
+    - `docker`: Full Docker Compose stack (recommended for most users)
+    - `local`: Direct systemd services on Linux host
+
+    **Configuration:**
+    - Backend port (default: `8000`)
+    - Frontend port (default: `3000`)
+    - Public host/IP for browser access (default: `localhost`)
+    - Authentication token (auto-generated or manual)
+
+    **Local mode only:**
+    - Database mode (`docker` for PostgreSQL in Docker, or `external` for existing DB)
+    - Whether to auto-start services after bootstrap
+  </Step>
+
+  <Step title="Access Mission Control">
+    After installation completes, the installer displays access URLs and credentials:
+
+    ```bash
+    Bootstrap complete (Docker mode).
+
+    Access URLs:
+    - Frontend: http://localhost:3000
+    - Backend:  http://localhost:8000/healthz
+
+    Auth:
+    - AUTH_MODE=local
+    - LOCAL_AUTH_TOKEN=your-generated-token-here
+
+    Stop stack:
+      docker compose -f compose.yml --env-file .env down
+    ```
+  </Step>
+</Steps>
+
+### Non-Interactive Mode
+
+For automation or CI/CD, pass all options as flags:
+
+```bash
+./install.sh \
+  --mode docker \
+  --backend-port 8000 \
+  --frontend-port 3000 \
+  --public-host localhost \
+  --api-url http://localhost:8000 \
+  --token-mode generate
+```
+
+<Accordion title="View all installer options">
+```bash
+Usage: install.sh [options]
+
+Options:
+  --mode <docker|local>
+  --backend-port <port>
+  --frontend-port <port>
+  --public-host <host>
+  --api-url <url>
+  --token-mode <generate|manual>
+  --local-auth-token <token>      Required when --token-mode manual
+  --db-mode <docker|external>     Local mode only
+  --database-url <url>            Required when --db-mode external
+  --start-services <yes|no>       Local mode only
+  -h, --help
+```
+</Accordion>
+
+---
+
+## Docker Compose (Manual)
+
+For users who prefer manual control over the Docker setup.
+
+<Steps>
+  <Step title="Clone and configure">
+    ```bash
+    git clone https://github.com/abhi1693/openclaw-mission-control.git
+    cd openclaw-mission-control
+    cp .env.example .env
+    ```
+
+    Edit `.env` and configure required values:
+
+    ```bash .env
+    # App ports
+    FRONTEND_PORT=3000
+    BACKEND_PORT=8000
+
+    # Database
+    POSTGRES_DB=mission_control
+    POSTGRES_USER=postgres
+    POSTGRES_PASSWORD=postgres
+    POSTGRES_PORT=5432
+
+    # Backend
+    CORS_ORIGINS=http://localhost:3000
+    DB_AUTO_MIGRATE=true
+    AUTH_MODE=local
+    LOCAL_AUTH_TOKEN=  # Generate with: openssl rand -hex 32
+
+    # Frontend
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+    ```
+
+    <Warning>
+      `LOCAL_AUTH_TOKEN` must be at least 50 characters when `AUTH_MODE=local`.
+    </Warning>
+  </Step>
+
+  <Step title="Start the stack">
+    ```bash
+    docker compose -f compose.yml --env-file .env up -d --build
+    ```
+
+    The first build takes 5-10 minutes. Subsequent starts are much faster.
+  </Step>
+
+  <Step title="Verify services">
+    ```bash
+    # Check container status
+    docker compose ps
+
+    # Test backend health
+    curl http://localhost:8000/healthz
+
+    # View logs
+    docker compose logs -f backend
+    docker compose logs -f frontend
+    ```
+  </Step>
+
+  <Step title="Open the UI">
+    Navigate to http://localhost:3000 and authenticate with your `LOCAL_AUTH_TOKEN`.
+  </Step>
+</Steps>
+
+### Docker Compose Services
+
+The `compose.yml` defines the following services:
+
+<AccordionGroup>
+  <Accordion title="db (PostgreSQL 16)">
+    ```yaml
+    db:
+      image: postgres:16-alpine
+      environment:
+        POSTGRES_DB: ${POSTGRES_DB:-mission_control}
+        POSTGRES_USER: ${POSTGRES_USER:-postgres}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      ports:
+        - "${POSTGRES_PORT:-5432}:5432"
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    ```
+  </Accordion>
+
+  <Accordion title="redis (Redis 7)">
+    ```yaml
+    redis:
+      image: redis:7-alpine
+      ports:
+        - "${REDIS_PORT:-6379}:6379"
+    ```
+  </Accordion>
+
+  <Accordion title="backend (FastAPI)">
+    ```yaml
+    backend:
+      build:
+        context: .
+        dockerfile: backend/Dockerfile
+      environment:
+        DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+        CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+        DB_AUTO_MIGRATE: false
+        AUTH_MODE: ${AUTH_MODE}
+        LOCAL_AUTH_TOKEN: ${LOCAL_AUTH_TOKEN}
+        RQ_REDIS_URL: redis://redis:6379/0
+      depends_on:
+        db:
+          condition: service_healthy
+        redis:
+          condition: service_started
+      ports:
+        - "${BACKEND_PORT:-8000}:8000"
+    ```
+  </Accordion>
+
+  <Accordion title="frontend (Next.js)">
+    ```yaml
+    frontend:
+      build:
+        context: ./frontend
+        args:
+          NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+          NEXT_PUBLIC_AUTH_MODE: ${AUTH_MODE}
+      environment:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_AUTH_MODE: ${AUTH_MODE}
+      depends_on:
+        - backend
+      ports:
+        - "${FRONTEND_PORT:-3000}:3000"
+    ```
+  </Accordion>
+
+  <Accordion title="webhook-worker (RQ Worker)">
+    ```yaml
+    webhook-worker:
+      build:
+        context: .
+        dockerfile: backend/Dockerfile
+      command: ["rq", "worker", "-u", "redis://redis:6379/0"]
+      environment:
+        DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+        AUTH_MODE: ${AUTH_MODE}
+        LOCAL_AUTH_TOKEN: ${LOCAL_AUTH_TOKEN}
+        RQ_REDIS_URL: redis://redis:6379/0
+      depends_on:
+        redis:
+          condition: service_started
+        db:
+          condition: service_healthy
+      restart: unless-stopped
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Systemd Deployment
+
+Run Mission Control services directly on a Linux host using systemd user services (no Docker).
+
+<Note>
+  This method is ideal for production deployments on dedicated Linux servers where you want fine-grained control over each service.
+</Note>
+
+<Steps>
+  <Step title="Install system dependencies">
+    ```bash
+    # Ubuntu/Debian
+    sudo apt-get update
+    sudo apt-get install -y postgresql-16 redis-server curl git make openssl
+
+    # Install Node.js 22+
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+    sudo apt-get install -y nodejs
+
+    # Install uv (Python package manager)
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+
+    # Install Python 3.12 via uv
+    uv python install 3.12
+    ```
+  </Step>
+
+  <Step title="Clone and configure">
+    ```bash
+    git clone https://github.com/abhi1693/openclaw-mission-control.git
+    cd openclaw-mission-control
+
+    # Root config
+    cp .env.example .env
+    # Backend config
+    cp backend/.env.example backend/.env
+    # Frontend config
+    cp frontend/.env.example frontend/.env
+    ```
+
+    Edit `backend/.env`:
+
+    ```bash backend/.env
+    ENVIRONMENT=prod
+    LOG_LEVEL=INFO
+    DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/mission_control
+    CORS_ORIGINS=http://localhost:3000
+    BASE_URL=http://localhost:8000
+    AUTH_MODE=local
+    LOCAL_AUTH_TOKEN=your-secure-token-min-50-chars
+    DB_AUTO_MIGRATE=false
+    RQ_REDIS_URL=redis://localhost:6379/0
+    ```
+
+    Edit `frontend/.env`:
+
+    ```bash frontend/.env
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+    NEXT_PUBLIC_AUTH_MODE=local
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    # Install backend dependencies
+    cd backend
+    uv sync
+    cd ..
+
+    # Install frontend dependencies
+    cd frontend
+    npm install
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Initialize database">
+    ```bash
+    # Create database
+    sudo -u postgres createdb mission_control
+
+    # Run migrations
+    cd backend
+    uv run alembic upgrade head
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Build frontend">
+    ```bash
+    cd frontend
+    npm run build
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Create systemd services">
+    Create `~/.config/systemd/user/mission-control-backend.service`:
+
+    ```ini
+    [Unit]
+    Description=Mission Control Backend
+    After=network.target postgresql.service
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/home/ubuntu/mission-control/backend
+    ExecStart=/home/ubuntu/.local/bin/uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+    Restart=on-failure
+    RestartSec=10s
+
+    [Install]
+    WantedBy=default.target
+    ```
+
+    Create `~/.config/systemd/user/mission-control-frontend.service`:
+
+    ```ini
+    [Unit]
+    Description=Mission Control Frontend
+    After=network.target mission-control-backend.service
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/home/ubuntu/mission-control/frontend
+    ExecStart=/usr/bin/npm run start -- --hostname 0.0.0.0 --port 3000
+    Restart=on-failure
+    RestartSec=10s
+
+    [Install]
+    WantedBy=default.target
+    ```
+
+    Create `~/.config/systemd/user/mission-control-worker.service`:
+
+    ```ini
+    [Unit]
+    Description=Mission Control Webhook Worker
+    After=network.target redis.service
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/home/ubuntu/mission-control/backend
+    ExecStart=/home/ubuntu/.local/bin/uv run rq worker -u redis://localhost:6379/0
+    Restart=on-failure
+    RestartSec=10s
+
+    [Install]
+    WantedBy=default.target
+    ```
+  </Step>
+
+  <Step title="Enable and start services">
+    ```bash
+    # Reload systemd
+    systemctl --user daemon-reload
+
+    # Enable services to start on boot
+    systemctl --user enable mission-control-backend
+    systemctl --user enable mission-control-frontend
+    systemctl --user enable mission-control-worker
+
+    # Start services
+    systemctl --user start mission-control-backend
+    systemctl --user start mission-control-frontend
+    systemctl --user start mission-control-worker
+    ```
+  </Step>
+
+  <Step title="Verify services">
+    ```bash
+    # Check status
+    systemctl --user status mission-control-backend
+    systemctl --user status mission-control-frontend
+    systemctl --user status mission-control-worker
+
+    # View logs
+    journalctl --user -u mission-control-backend -f
+    journalctl --user -u mission-control-frontend -f
+
+    # Test endpoints
+    curl http://localhost:8000/healthz
+    curl http://localhost:3000
+    ```
+  </Step>
+</Steps>
+
+### Managing Systemd Services
+
+<CodeGroup>
+```bash View status
+systemctl --user status mission-control-{backend,frontend,worker}
+```
+
+```bash Restart service
+systemctl --user restart mission-control-backend
+```
+
+```bash Restart all
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+```
+
+```bash View logs
+journalctl --user -u mission-control-backend -f
+```
+
+```bash Stop service
+systemctl --user stop mission-control-frontend
+```
+</CodeGroup>
+
+### Updating Code (Systemd)
+
+When you pull new changes:
+
+```bash
+cd /path/to/mission-control
+
+# Pull changes
+git pull
+
+# Update backend
+cd backend
+uv sync
+uv run alembic upgrade head
+cd ..
+
+# Update frontend
+cd frontend
+npm install
+npm run build
+cd ..
+
+# Restart services
+systemctl --user restart mission-control-backend mission-control-frontend mission-control-worker
+```
+
+---
+
+## Post-Installation
+
+### Database Migrations
+
+If `DB_AUTO_MIGRATE=false` (recommended for production), run migrations manually:
+
+```bash
+cd backend
+uv run alembic upgrade head
+```
+
+### Troubleshooting Port Conflicts
+
+If port 3000 is already in use:
+
+```bash
+# Find and kill process
+fuser -k 3000/tcp
+sleep 2
+
+# Restart service
+systemctl --user restart mission-control-frontend
+```
+
+### Verifying System Health
+
+```bash
+# Backend health
+curl -s http://localhost:8000/healthz
+
+# Test authentication
+curl -s http://localhost:8000/api/v1/organizations/me/member \
+  -H "Authorization: Bearer your-local-auth-token"
+
+# Check frontend
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Configure authentication, CORS, logging, and advanced settings
+  </Card>
+  <Card title="Docker Deployment" icon="rocket" href="/deployment/docker">
+    Production deployment best practices and security hardening
+  </Card>
+  <Card title="Gateway Setup" icon="network-wired" href="/guides/gateway-setup">
+    Connect OpenClaw gateways to Mission Control
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Integrate Mission Control with your workflows via REST API
+  </Card>
+</CardGroup>

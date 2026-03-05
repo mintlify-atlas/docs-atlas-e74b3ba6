@@ -1,0 +1,306 @@
+---
+title: 'Task Dependencies'
+description: 'Understand how task dependencies work in OpenClaw Mission Control'
+---
+
+Task dependencies allow you to model workflows where certain tasks must be completed before others can begin. OpenClaw tracks dependency status and automatically blocks tasks when their dependencies are incomplete.
+
+## Dependency Concepts
+
+### Depends On Relationship
+
+When Task A depends on Task B:
+- Task B is a **dependency** of Task A
+- Task A is **dependent** on Task B
+- Task A cannot progress if Task B is not done
+
+### Blocking Behavior
+
+A task is **blocked** when:
+- It has one or more dependencies
+- At least one dependency is not in `done` status
+- The task itself is not already `done`
+
+Blocked tasks cannot:
+- Be assigned to an agent
+- Move to `in_progress` status
+- Move to `review` status
+- Move to `done` status
+
+Blocked tasks must remain in `inbox` status until all dependencies are completed.
+
+## Setting Dependencies
+
+### On Task Creation
+
+Specify dependencies when creating a task:
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/boards/{board_id}/tasks" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Deploy to production",
+    "description": "Deploy the authentication service",
+    "depends_on_task_ids": [
+      "task-id-1",
+      "task-id-2"
+    ]
+  }'
+```
+
+If any dependencies are incomplete, the task will be created in blocked state:
+
+```json
+{
+  "id": "new-task-id",
+  "title": "Deploy to production",
+  "status": "inbox",
+  "depends_on_task_ids": ["task-id-1", "task-id-2"],
+  "blocked_by_task_ids": ["task-id-1"],
+  "is_blocked": true
+}
+```
+
+### On Task Update
+
+Update dependencies using the PATCH endpoint:
+
+```bash
+curl -X PATCH "https://api.openclaw.ai/api/boards/{board_id}/tasks/{task_id}" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "depends_on_task_ids": [
+      "task-id-1",
+      "task-id-2",
+      "task-id-3"
+    ]
+  }'
+```
+
+**Important Notes:**
+- The `depends_on_task_ids` array is a complete replacement, not a merge
+- Pass an empty array `[]` to clear all dependencies
+- Dependencies cannot be changed after a task reaches `done` status
+- Updating dependencies may change the task's `is_blocked` status
+
+## Validation Rules
+
+### Same Board Requirement
+
+All dependencies must exist on the same board as the task:
+
+```json
+// Error Response
+{
+  "detail": {
+    "message": "One or more dependency tasks were not found on this board.",
+    "missing_task_ids": ["task-id-3"]
+  }
+}
+```
+
+### No Self-Dependencies
+
+A task cannot depend on itself:
+
+```json
+// Error Response
+{
+  "detail": "Task cannot depend on itself."
+}
+```
+
+### No Circular Dependencies
+
+Dependency chains cannot form cycles:
+
+```
+Task A → depends on → Task B
+Task B → depends on → Task C
+Task C → depends on → Task A  ❌ Cycle detected!
+```
+
+```json
+// Error Response
+{
+  "detail": "Dependency cycle detected. Remove the cycle before saving."
+}
+```
+
+The validation checks the entire board's dependency graph, catching both direct and indirect cycles.
+
+## Automatic Reconciliation
+
+### When Dependencies Complete
+
+When a dependency task moves to `done` status:
+1. All dependent tasks are checked
+2. If no other dependencies block them, `is_blocked` becomes `false`
+3. An activity log entry is added to dependent tasks
+4. Dependent tasks can now be assigned and progressed
+
+### When Dependencies Reopen
+
+When a done dependency is moved back to another status:
+1. All dependent tasks are identified
+2. Tasks that are not `done` are reset to `inbox`:
+   - Status set to `inbox`
+   - Assigned agent cleared
+   - In-progress timestamp cleared
+3. Activity log entries document the reset
+
+```json
+// Activity log message
+{
+  "event_type": "task.status_changed",
+  "message": "Task returned to inbox: dependency reopened (Authentication API)."
+}
+```
+
+## Reading Dependency Status
+
+### In List Response
+
+Every task includes dependency information:
+
+```json
+{
+  "id": "task-id",
+  "depends_on_task_ids": ["dep-1", "dep-2", "dep-3"],
+  "blocked_by_task_ids": ["dep-1"],
+  "is_blocked": true
+}
+```
+
+- `depends_on_task_ids`: All configured dependencies
+- `blocked_by_task_ids`: Subset of dependencies that are incomplete
+- `is_blocked`: Whether task is currently blocked
+
+### Checking Specific Dependencies
+
+To check the status of dependency tasks, fetch them individually or use the list endpoint:
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/boards/{board_id}/tasks?status=done" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Best Practices
+
+### Design Clear Workflows
+
+```
+✅ Good:
+Setup Database → Implement API → Write Tests → Deploy
+
+❌ Avoid:
+Task A ↔ Task B (mutual dependency - creates cycle)
+```
+
+### Use Dependencies for Prerequisites
+
+Depend on tasks that must be **completed** before starting:
+- Infrastructure setup before deployment
+- API implementation before integration tests
+- Design approval before development
+
+### Don't Over-Depend
+
+Avoid creating dependencies for tasks that can run in parallel:
+- Separate feature branches don't need to depend on each other
+- Documentation can often be written alongside implementation
+
+### Handle Long Chains Carefully
+
+Long dependency chains can create bottlenecks:
+
+```
+Task 1 → Task 2 → Task 3 → Task 4 → Task 5
+```
+
+If Task 1 is blocked, all 5 tasks are blocked. Consider:
+- Breaking work into smaller, parallel tasks
+- Reducing chain depth where possible
+- Ensuring critical path tasks are prioritized
+
+## Example Workflows
+
+### Feature Development Workflow
+
+```json
+[
+  {
+    "id": "design-task",
+    "title": "Design authentication flow",
+    "status": "done",
+    "depends_on_task_ids": []
+  },
+  {
+    "id": "api-task",
+    "title": "Implement authentication API",
+    "status": "in_progress",
+    "depends_on_task_ids": ["design-task"],
+    "is_blocked": false
+  },
+  {
+    "id": "ui-task",
+    "title": "Build login UI",
+    "status": "inbox",
+    "depends_on_task_ids": ["design-task"],
+    "is_blocked": false
+  },
+  {
+    "id": "integration-task",
+    "title": "Integration testing",
+    "status": "inbox",
+    "depends_on_task_ids": ["api-task", "ui-task"],
+    "blocked_by_task_ids": ["api-task"],
+    "is_blocked": true
+  },
+  {
+    "id": "deploy-task",
+    "title": "Deploy to production",
+    "status": "inbox",
+    "depends_on_task_ids": ["integration-task"],
+    "blocked_by_task_ids": ["integration-task"],
+    "is_blocked": true
+  }
+]
+```
+
+In this workflow:
+- Design is complete
+- API and UI work can happen in parallel (both depend on design)
+- Integration cannot start until both API and UI are done
+- Deploy waits for integration to complete
+
+### Infrastructure Setup Workflow
+
+```json
+[
+  {
+    "id": "provision-infra",
+    "title": "Provision cloud resources",
+    "depends_on_task_ids": []
+  },
+  {
+    "id": "setup-database",
+    "title": "Configure database",
+    "depends_on_task_ids": ["provision-infra"]
+  },
+  {
+    "id": "setup-cache",
+    "title": "Configure Redis cache",
+    "depends_on_task_ids": ["provision-infra"]
+  },
+  {
+    "id": "deploy-app",
+    "title": "Deploy application",
+    "depends_on_task_ids": ["setup-database", "setup-cache"]
+  }
+]
+```
+
+This creates a clear deployment sequence with parallel infrastructure setup steps.

@@ -1,0 +1,343 @@
+---
+title: Dashboard Metrics
+api: GET /api/metrics/dashboard
+---
+
+Retrieve aggregated metrics and time-series data for dashboard visualizations.
+
+## Authentication
+
+Requires organization member authentication.
+
+## Get Dashboard Metrics
+
+`GET /api/metrics/dashboard`
+
+Retrieve comprehensive dashboard metrics including KPIs and time-series data.
+
+### Query Parameters
+
+<ParamField query="range" type="string" default="24h">
+  Time range for metrics. Options:
+  - `24h` - Last 24 hours (hourly buckets)
+  - `3d` - Last 3 days (daily buckets)
+  - `7d` - Last 7 days (daily buckets)
+  - `14d` - Last 14 days (daily buckets)
+  - `1m` - Last 30 days (daily buckets)
+  - `3m` - Last 90 days (weekly buckets)
+  - `6m` - Last 180 days (weekly buckets)
+  - `1y` - Last 365 days (monthly buckets)
+</ParamField>
+
+<ParamField query="board_id" type="string" optional>
+  Filter metrics to a specific board
+</ParamField>
+
+<ParamField query="group_id" type="string" optional>
+  Filter metrics to boards in a specific board group
+</ParamField>
+
+### Response
+
+<ResponseField name="range" type="string">
+  Selected time range key
+</ResponseField>
+
+<ResponseField name="generated_at" type="string">
+  ISO 8601 timestamp when metrics were generated
+</ResponseField>
+
+<ResponseField name="kpis" type="object">
+  Key performance indicators
+  
+  <ResponseField name="active_agents" type="integer">
+    Number of agents active in the selected range
+  </ResponseField>
+  
+  <ResponseField name="tasks_in_progress" type="integer">
+    Number of tasks currently in progress
+  </ResponseField>
+  
+  <ResponseField name="error_rate_pct" type="number">
+    Percentage of events that are errors
+  </ResponseField>
+  
+  <ResponseField name="median_cycle_time_hours_7d" type="number" optional>
+    Median cycle time in hours for the range (null if no data)
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="throughput" type="object">
+  Task completion throughput over time
+  
+  <ResponseField name="primary" type="object">
+    Primary range series
+    
+    <ResponseField name="range" type="string">
+      Range key
+    </ResponseField>
+    
+    <ResponseField name="bucket" type="string">
+      Bucket type: `hour`, `day`, `week`, or `month`
+    </ResponseField>
+    
+    <ResponseField name="points" type="array">
+      Array of time-series points
+      
+      <ResponseField name="period" type="string">
+        ISO 8601 timestamp for bucket start
+      </ResponseField>
+      
+      <ResponseField name="value" type="number">
+        Number of tasks completed in this period
+      </ResponseField>
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="comparison" type="object">
+    Comparison period series (same structure as primary)
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="cycle_time" type="object">
+  Average cycle time in hours (same structure as throughput)
+</ResponseField>
+
+<ResponseField name="error_rate" type="object">
+  Error rate percentage over time (same structure as throughput)
+</ResponseField>
+
+<ResponseField name="wip" type="object">
+  Work-in-progress status breakdown
+  
+  <ResponseField name="primary" type="object">
+    Primary range WIP series
+    
+    <ResponseField name="range" type="string">
+      Range key
+    </ResponseField>
+    
+    <ResponseField name="bucket" type="string">
+      Bucket type
+    </ResponseField>
+    
+    <ResponseField name="points" type="array">
+      Array of WIP breakdown points
+      
+      <ResponseField name="period" type="string">
+        ISO 8601 timestamp
+      </ResponseField>
+      
+      <ResponseField name="inbox" type="integer">
+        Tasks in inbox status
+      </ResponseField>
+      
+      <ResponseField name="in_progress" type="integer">
+        Tasks in progress
+      </ResponseField>
+      
+      <ResponseField name="review" type="integer">
+        Tasks in review
+      </ResponseField>
+      
+      <ResponseField name="done" type="integer">
+        Tasks completed
+      </ResponseField>
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="comparison" type="object">
+    Comparison period WIP series
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/metrics/dashboard?range=7d&board_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Example Response
+
+```json
+{
+  "range": "7d",
+  "generated_at": "2026-03-05T10:30:00Z",
+  "kpis": {
+    "active_agents": 8,
+    "tasks_in_progress": 23,
+    "error_rate_pct": 2.5,
+    "median_cycle_time_hours_7d": 4.2
+  },
+  "throughput": {
+    "primary": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-27T00:00:00Z", "value": 12},
+        {"period": "2026-02-28T00:00:00Z", "value": 15},
+        {"period": "2026-03-01T00:00:00Z", "value": 18},
+        {"period": "2026-03-02T00:00:00Z", "value": 14},
+        {"period": "2026-03-03T00:00:00Z", "value": 16},
+        {"period": "2026-03-04T00:00:00Z", "value": 19},
+        {"period": "2026-03-05T00:00:00Z", "value": 8}
+      ]
+    },
+    "comparison": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-20T00:00:00Z", "value": 10},
+        {"period": "2026-02-21T00:00:00Z", "value": 11},
+        {"period": "2026-02-22T00:00:00Z", "value": 13},
+        {"period": "2026-02-23T00:00:00Z", "value": 12},
+        {"period": "2026-02-24T00:00:00Z", "value": 14},
+        {"period": "2026-02-25T00:00:00Z", "value": 15},
+        {"period": "2026-02-26T00:00:00Z", "value": 11}
+      ]
+    }
+  },
+  "cycle_time": {
+    "primary": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-27T00:00:00Z", "value": 5.2},
+        {"period": "2026-02-28T00:00:00Z", "value": 4.8},
+        {"period": "2026-03-01T00:00:00Z", "value": 3.9},
+        {"period": "2026-03-02T00:00:00Z", "value": 4.1},
+        {"period": "2026-03-03T00:00:00Z", "value": 4.5},
+        {"period": "2026-03-04T00:00:00Z", "value": 3.7},
+        {"period": "2026-03-05T00:00:00Z", "value": 4.2}
+      ]
+    },
+    "comparison": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-20T00:00:00Z", "value": 6.1},
+        {"period": "2026-02-21T00:00:00Z", "value": 5.8},
+        {"period": "2026-02-22T00:00:00Z", "value": 5.5},
+        {"period": "2026-02-23T00:00:00Z", "value": 5.9},
+        {"period": "2026-02-24T00:00:00Z", "value": 5.3},
+        {"period": "2026-02-25T00:00:00Z", "value": 5.7},
+        {"period": "2026-02-26T00:00:00Z", "value": 5.2}
+      ]
+    }
+  },
+  "error_rate": {
+    "primary": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-27T00:00:00Z", "value": 3.2},
+        {"period": "2026-02-28T00:00:00Z", "value": 2.8},
+        {"period": "2026-03-01T00:00:00Z", "value": 1.9},
+        {"period": "2026-03-02T00:00:00Z", "value": 2.5},
+        {"period": "2026-03-03T00:00:00Z", "value": 2.1},
+        {"period": "2026-03-04T00:00:00Z", "value": 1.7},
+        {"period": "2026-03-05T00:00:00Z", "value": 2.3}
+      ]
+    },
+    "comparison": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-20T00:00:00Z", "value": 4.1},
+        {"period": "2026-02-21T00:00:00Z", "value": 3.8},
+        {"period": "2026-02-22T00:00:00Z", "value": 3.5},
+        {"period": "2026-02-23T00:00:00Z", "value": 3.9},
+        {"period": "2026-02-24T00:00:00Z", "value": 3.3},
+        {"period": "2026-02-25T00:00:00Z", "value": 3.7},
+        {"period": "2026-02-26T00:00:00Z", "value": 3.2}
+      ]
+    }
+  },
+  "wip": {
+    "primary": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-27T00:00:00Z", "inbox": 15, "in_progress": 22, "review": 8, "done": 12},
+        {"period": "2026-02-28T00:00:00Z", "inbox": 18, "in_progress": 24, "review": 10, "done": 15},
+        {"period": "2026-03-01T00:00:00Z", "inbox": 20, "in_progress": 26, "review": 12, "done": 18},
+        {"period": "2026-03-02T00:00:00Z", "inbox": 17, "in_progress": 23, "review": 9, "done": 14},
+        {"period": "2026-03-03T00:00:00Z", "inbox": 19, "in_progress": 25, "review": 11, "done": 16},
+        {"period": "2026-03-04T00:00:00Z", "inbox": 21, "in_progress": 27, "review": 13, "done": 19},
+        {"period": "2026-03-05T00:00:00Z", "inbox": 16, "in_progress": 23, "review": 10, "done": 8}
+      ]
+    },
+    "comparison": {
+      "range": "7d",
+      "bucket": "day",
+      "points": [
+        {"period": "2026-02-20T00:00:00Z", "inbox": 12, "in_progress": 18, "review": 6, "done": 10},
+        {"period": "2026-02-21T00:00:00Z", "inbox": 14, "in_progress": 20, "review": 7, "done": 11},
+        {"period": "2026-02-22T00:00:00Z", "inbox": 16, "in_progress": 22, "review": 9, "done": 13},
+        {"period": "2026-02-23T00:00:00Z", "inbox": 13, "in_progress": 19, "review": 7, "done": 12},
+        {"period": "2026-02-24T00:00:00Z", "inbox": 15, "in_progress": 21, "review": 8, "done": 14},
+        {"period": "2026-02-25T00:00:00Z", "inbox": 17, "in_progress": 23, "review": 10, "done": 15},
+        {"period": "2026-02-26T00:00:00Z", "inbox": 14, "in_progress": 19, "review": 8, "done": 11}
+      ]
+    }
+  }
+}
+```
+
+## Metric Definitions
+
+### Throughput
+
+Number of tasks that reached `review` status in each time bucket. Measures team velocity and completion rate.
+
+### Cycle Time
+
+Average time in hours from when a task enters `in_progress` status to when it reaches `review` status. Lower is better.
+
+### Error Rate
+
+Percentage of activity events with event types matching the pattern `%failed`. Higher values indicate quality issues.
+
+### Work in Progress (WIP)
+
+Breakdown of tasks by status:
+- **Inbox**: Tasks created but not started
+- **In Progress**: Tasks actively being worked on
+- **Review**: Tasks completed and awaiting review
+- **Done**: Tasks fully completed
+
+### Active Agents
+
+Number of agents with a `last_seen_at` timestamp within the selected range.
+
+### Tasks in Progress
+
+Current count of tasks with `in_progress` status that were updated within the range.
+
+## Time Buckets
+
+Metrics are aggregated into time buckets based on the selected range:
+
+- **hour**: For 24h range
+- **day**: For 3d, 7d, 14d, 1m ranges
+- **week**: For 3m, 6m ranges
+- **month**: For 1y range
+
+Buckets are aligned to:
+- Hour buckets: Start of hour
+- Day buckets: Start of day (00:00:00)
+- Week buckets: Monday 00:00:00
+- Month buckets: First day of month 00:00:00
+
+## Comparison Period
+
+Each metric includes a comparison period equal in length to the primary period, ending where the primary period starts. This allows for period-over-period trend analysis.
+
+For example, with `range=7d`:
+- Primary: Last 7 days
+- Comparison: Previous 7 days before that
+
+## Access Control
+
+Users see metrics aggregated from all boards they have read access to in their organization. Use `board_id` or `group_id` to filter to specific boards.

@@ -1,0 +1,294 @@
+---
+title: Manage Tags
+api: GET /api/tags
+---
+
+Create and manage tags for organizing tasks within your organization.
+
+## Authentication
+
+List and get operations require organization member authentication. Create, update, and delete require organization admin authentication.
+
+## List Tags
+
+`GET /api/tags`
+
+List all tags in the organization.
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Number of items per page (max 100)
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Pagination offset
+</ParamField>
+
+### Response
+
+<ResponseField name="items" type="array">
+  Array of tag objects
+  
+  <ResponseField name="id" type="string">
+    Tag UUID
+  </ResponseField>
+  
+  <ResponseField name="organization_id" type="string">
+    Organization UUID
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Tag display name
+  </ResponseField>
+  
+  <ResponseField name="slug" type="string">
+    URL-safe slug (auto-generated from name)
+  </ResponseField>
+  
+  <ResponseField name="color" type="string">
+    6-digit hex color code (e.g., `ff6b6b`)
+  </ResponseField>
+  
+  <ResponseField name="description" type="string" optional>
+    Tag description
+  </ResponseField>
+  
+  <ResponseField name="task_count" type="integer">
+    Number of tasks with this tag
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string">
+    ISO 8601 timestamp
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/tags" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Example Response
+
+```json
+{
+  "items": [
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "organization_id": "8b9e6679-7425-40de-944b-e07fc1f90ae8",
+      "name": "Production",
+      "slug": "production",
+      "color": "ff6b6b",
+      "description": "Production environment tasks",
+      "task_count": 15,
+      "created_at": "2026-02-01T10:00:00Z",
+      "updated_at": "2026-03-01T10:00:00Z"
+    },
+    {
+      "id": "9d1e7689-8536-51ef-a827-557766551111",
+      "organization_id": "8b9e6679-7425-40de-944b-e07fc1f90ae8",
+      "name": "Bug",
+      "slug": "bug",
+      "color": "d63031",
+      "description": "Bug fixes and issues",
+      "task_count": 8,
+      "created_at": "2026-02-01T10:00:00Z",
+      "updated_at": "2026-02-15T10:00:00Z"
+    }
+  ],
+  "total": 25,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+## Create Tag
+
+`POST /api/tags`
+
+Create a new tag in the organization.
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Tag name (cannot be empty)
+</ParamField>
+
+<ParamField body="slug" type="string" optional>
+  URL-safe slug. If not provided, auto-generated from name
+</ParamField>
+
+<ParamField body="color" type="string" default="9e9e9e">
+  6-digit hex color code (with or without leading `#`)
+</ParamField>
+
+<ParamField body="description" type="string" optional>
+  Tag description
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://api.openclaw.ai/api/tags" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Critical",
+    "color": "e74c3c",
+    "description": "High priority critical tasks"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+  "organization_id": "8b9e6679-7425-40de-944b-e07fc1f90ae8",
+  "name": "Critical",
+  "slug": "critical",
+  "color": "e74c3c",
+  "description": "High priority critical tasks",
+  "task_count": 0,
+  "created_at": "2026-03-05T10:30:00Z",
+  "updated_at": "2026-03-05T10:30:00Z"
+}
+```
+
+## Get Tag
+
+`GET /api/tags/{tag_id}`
+
+Get a single tag by ID.
+
+### Path Parameters
+
+<ParamField path="tag_id" type="string" required>
+  Tag UUID
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.openclaw.ai/api/tags/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Update Tag
+
+`PATCH /api/tags/{tag_id}`
+
+Update an existing tag. All fields are optional but at least one must be provided.
+
+### Path Parameters
+
+<ParamField path="tag_id" type="string" required>
+  Tag UUID
+</ParamField>
+
+### Request Body
+
+<ParamField body="name" type="string" optional>
+  New tag name
+</ParamField>
+
+<ParamField body="slug" type="string" optional>
+  New slug (must be unique in organization)
+</ParamField>
+
+<ParamField body="color" type="string" optional>
+  New hex color code
+</ParamField>
+
+<ParamField body="description" type="string" optional>
+  New description (use empty string to clear)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PATCH "https://api.openclaw.ai/api/tags/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production - Critical",
+    "color": "c0392b"
+  }'
+```
+
+## Delete Tag
+
+`DELETE /api/tags/{tag_id}`
+
+Delete a tag and remove it from all associated tasks.
+
+### Path Parameters
+
+<ParamField path="tag_id" type="string" required>
+  Tag UUID
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://api.openclaw.ai/api/tags/7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Example Response
+
+```json
+{
+  "ok": true
+}
+```
+
+## Tag Slugs
+
+Slugs are URL-safe identifiers generated from tag names:
+
+- Converted to lowercase
+- Spaces and special characters replaced with hyphens
+- Multiple hyphens collapsed to single hyphen
+- Leading/trailing hyphens removed
+
+Examples:
+- `"Production Environment"` → `"production-environment"`
+- `"Bug / Issue"` → `"bug-issue"`
+- `"P0 Critical!!!"` → `"p0-critical"`
+
+## Color Format
+
+Colors must be 6-digit hex codes:
+
+- With or without leading `#` (normalized to without)
+- Case-insensitive (normalized to lowercase)
+- Examples: `ff6b6b`, `#FF6B6B`, `FF6B6B` all become `ff6b6b`
+
+## Error Responses
+
+### 409 Conflict
+
+Returned when trying to create or update a tag with a slug that already exists.
+
+```json
+{
+  "detail": "Tag slug already exists in this organization."
+}
+```
+
+### 400 Bad Request
+
+Returned when color format is invalid.
+
+```json
+{
+  "detail": "color must be a 6-digit hex value"
+}
+```
